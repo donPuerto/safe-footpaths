@@ -359,7 +359,7 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .row { display: flex; gap: 12px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
 .rank { font-weight: 700; width: 28px; text-align: right; }
 .grow { flex: 1; min-width: 0; }
-.sheet { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35); display: flex; align-items: flex-end; justify-content: center; }
+.sheet { position: fixed; inset: 0; z-index: 20; background: rgba(0, 0, 0, 0.35); display: flex; align-items: flex-end; justify-content: center; }
 .panel { background: var(--card); width: 100%; max-width: 480px; border-radius: 14px 14px 0 0; padding: 16px; display: grid; gap: 10px; max-height: 90vh; overflow: auto; }
 label { display: grid; gap: 4px; font-size: 13px; }
 select, input { padding: 8px; border: 1px solid var(--line); border-radius: 8px; }
