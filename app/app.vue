@@ -11,6 +11,16 @@ const { data, pending, error } = useFetch<PlanData>('/api/plan', {
 })
 const reloadFresh = () => { fresh.value = Date.now() }
 
+// Console trace of the whole flow (load → drag → drop → panel → checks → save → re-plan).
+// Open DevTools → Console and filter on "[sf]". Never logs the passcode.
+const log = (...a: unknown[]) => console.log('%c[sf]', 'color:#0b5cad;font-weight:bold', ...a)
+watch(data, (d) => {
+  if (!d) return
+  const r = d.runs?.at(-1)
+  log('plan loaded', { lastRun: r?.run_at, checks: r?.ok, placements: d.plan?.length, overrides: d.overrides?.length, needsHuman: d.needsHuman?.length })
+})
+watch(error, (e) => { if (e) log('plan load FAILED', e.statusCode, e.statusMessage || e.message) })
+
 const tab = ref<'plan' | 'ranked' | 'human'>('plan')
 const s = (v: unknown) => String(v ?? '').trim()
 // "Councils and Shires - 13661" -> "Councils and Shires" (the job number is already shown in bold)
@@ -143,13 +153,24 @@ function startDrag(e: DragEvent, job: unknown) {
   dragJob.value = s(job)
   e.dataTransfer?.setData('text/plain', s(job))
   if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+  const p = data.value?.plan.find((x) => s(x.job) === s(job))
+  log('drag start', { job: s(job), from: p ? `${s(p.day)} crew ${s(p.crew)}` : 'not planned' })
 }
-function endDrag() { dragJob.value = ''; dropAt.value = '' }
+function overLane(day: string, crew: string) {
+  if (dropAt.value !== day + crew) log('drag over', { day, crew })
+  dropAt.value = day + crew
+}
+function endDrag(e?: DragEvent) {
+  if (e) log('drag end', { job: dragJob.value || '(dropped)', dropEffect: e.dataTransfer?.dropEffect })
+  dragJob.value = ''
+  dropAt.value = ''
+}
 function leaveLane(e: DragEvent) {
   if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) dropAt.value = ''
 }
 function dropOn(day: string, crew: string) {
   const job = dragJob.value
+  log('drop', { job: job || '(none – drag did not start on a job card)', day, crew })
   endDrag()
   if (!job) return
   openEdit(job)
@@ -157,6 +178,7 @@ function dropOn(day: string, crew: string) {
   setFieldValue('day', day)
   if (editing.value.techs <= 2) setFieldValue('crew', crew)
   editing.value.dropped = true
+  validateField('day').then((r) => log('drop target check', r.valid ? 'OK' : r.errors))
 }
 
 // ---- after a save the web API re-runs the planner (~1 min): watch for the new run, then show it ----
@@ -170,14 +192,17 @@ function startReplanWatch() {
   replanning.value = true
   justUpdated.value = false
   let tries = 0
+  log('re-plan started; waiting for a run newer than', runBefore)
   clearInterval(replanTimer)
   replanTimer = setInterval(() => {
-    if (++tries > 6) { clearInterval(replanTimer); replanning.value = false; return }
+    if (++tries > 6) { clearInterval(replanTimer); replanning.value = false; log('re-plan not seen after 3 min – press Refresh'); return }
+    log(`re-plan check ${tries}/6`)
     reloadFresh()
   }, 30000)
 }
 watch(lastRun, (r) => {
   if (replanning.value && s(r?.run_at) && s(r?.run_at) !== runBefore) {
+    log('re-plan done', { run: s(r?.run_at), checks: s(r?.ok) })
     clearInterval(replanTimer)
     replanning.value = false
     justUpdated.value = true
@@ -194,14 +219,41 @@ const message = ref('')
 // The same "can it physically go there?" checks the planner makes (engine.js planJobs), so Dan sees the
 // problem before saving instead of in "Needs a human" after the next run. A job of N days takes N work
 // days in a row (weekends and public holidays are skipped, like the planner does).
+// Dan's changes are placed first and the planner works around them, so a crew-day only has room
+// for what Dan's OTHER changes leave free (planned "Dan" rows + saved moves not run yet).
+const jobLoad = (days: number) => (days >= 1 ? 1 : days)
+function dansOtherJobs(day: string, crew: string, exceptJob: string) {
+  const out = new Map<string, number>()
+  for (const p of data.value?.plan ?? [])
+    if (s(p.day) === day && s(p.crew).split('+').includes(crew) && s(p.source).startsWith('Dan') && s(p.job) !== exceptJob)
+      out.set(s(p.job), jobLoad(Number(p.days) || 1))
+  for (const o of pendingChanges.value)
+    if (s(o.action) === 'move' && s(o.day) === day && s(o.crew).split('+').includes(crew) && s(o.job) !== exceptJob) {
+      const r = data.value?.ranked.find((x) => s(x.job) === s(o.job))
+      out.set(s(o.job), jobLoad(Number(r?.days) || 1))
+    }
+  return out
+}
+
 const { defineField, errors, handleSubmit, validateField, resetForm, setFieldValue, setFieldError } = useForm({
   validationSchema: {
-    day: (v: string) => {
+    day: (v: string, ctx: { form: Record<string, unknown> }) => {
       const i = workDays.value.indexOf(v)
       if (i < 0) return 'Pick a work day in the plan.'
       const n = Math.max(1, Math.ceil(editing.value?.days || 1))
       if (i + n > workDays.value.length)
         return `This job takes ${n} work days, so it can't start on ${dayLabel(v)}: the plan ends on ${dayLabel(workDays.value.at(-1)!)}.`
+      // room left on each day the job would use, for each crew it needs
+      const need = jobLoad(editing.value?.days || 1)
+      for (const d of workDays.value.slice(i, i + n))
+        for (const c of String(ctx.form.crew || 'A').split('+')) {
+          const others = dansOtherJobs(d, c, editing.value?.job || '')
+          const used = [...others.values()].reduce((a, b) => a + b, 0)
+          if (used + need > 1 + 1e-9) {
+            const list = [...others].map(([j, l]) => `${j} (${l === 1 ? '1 day' : l + ' day'})`).join(', ')
+            return `Crew ${c} is already full on ${dayLabel(d)} with your change ${list}. Pick another day or crew, or unlock ${[...others.keys()][0]} first.`
+          }
+        }
       return true
     },
     crew: (v: string) => {
@@ -215,6 +267,7 @@ const { defineField, errors, handleSubmit, validateField, resetForm, setFieldVal
 })
 const [day] = defineField('day')
 const [crew] = defineField('crew')
+watch(crew, () => { if (editing.value && day.value) validateField('day') }) // room depends on the crew too
 const [passcode] = defineField('passcode')
 const passLocked = ref(true) // read-only until focused, so no autofill
 // An old version remembered the passcode on the device; forget it.
@@ -231,6 +284,7 @@ function openEdit(job: unknown) {
   resetForm({ values: { crew: techs > 2 ? 'A+B' : s(current?.crew) || 'A', day: s(current?.day) || workDays.value[0] || '', passcode: '' } })
   passLocked.value = true
   message.value = ''
+  log('panel open', { job: id, techs, days, now: current ? `${s(current.day)} crew ${s(current.crew)} (${s(current.source)})` : 'not planned', replanning: replanning.value })
 }
 function closeEdit() {
   editing.value = null
@@ -247,11 +301,14 @@ async function save(action: 'lock' | 'move' | 'unlock') {
       action === 'lock' && editing.value.current
         ? { job: editing.value.job, action, crew: s(editing.value.current.crew), day: s(editing.value.current.day) }
         : { job: editing.value.job, action, crew: crew.value, day: day.value }
-    await $fetch('/api/override', { method: 'POST', body: { ...body, passcode: passcode.value } })
+    log('save →', body)
+    const res = await $fetch('/api/override', { method: 'POST', body: { ...body, passcode: passcode.value } })
+    log('save ✓', res)
     message.value = (action === 'unlock' ? 'Unlocked.' : 'Saved.') + ' Re-planning now – the calendar updates by itself in about a minute.'
     reloadFresh()
     startReplanWatch()
   } catch (e: any) {
+    log('save ✗', e?.statusCode, e?.statusMessage || e?.data?.statusMessage || e?.message)
     if (e?.statusCode === 401) setFieldError('passcode', 'Wrong passcode.')
     else message.value = e?.statusMessage || e?.data?.statusMessage || 'Could not save.'
   } finally {
@@ -259,9 +316,14 @@ async function save(action: 'lock' | 'move' | 'unlock') {
   }
 }
 // Move checks every field; Lock and Unlock only need the passcode (they don't use the day/crew boxes).
-const submitMove = handleSubmit(() => save('move'))
+const submitMove = handleSubmit(
+  () => save('move'),
+  ({ errors: e }) => log('save blocked by form checks', e),
+)
 async function saveWithPasscode(action: 'lock' | 'unlock') {
-  if ((await validateField('passcode')).valid) await save(action)
+  const r = await validateField('passcode')
+  if (r.valid) await save(action)
+  else log(`${action} blocked by form checks`, r.errors)
 }
 </script>
 
@@ -355,7 +417,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                 <span v-if="s(p.source).startsWith('Dan')" class="tag">🔒 {{ p.source }}</span>
               </button>
               <div v-for="cr in crews" :key="cr.id" class="lane" :class="[crewClass(cr.id), { drop: dropAt === c.iso + cr.id }]"
-                @dragover.prevent="dropAt = c.iso + cr.id" @dragleave="leaveLane" @drop.prevent="dropOn(c.iso, cr.id)">
+                @dragover.prevent="overLane(c.iso, cr.id)" @dragleave="leaveLane" @drop.prevent="dropOn(c.iso, cr.id)">
                 <button v-for="p in laneJobs(c.iso, cr.id)" :key="s(p.job) + p.part" class="job" :class="crewClass(p.crew)" draggable="true"
                   @dragstart="startDrag($event, p.job)" @dragend="endDrag" @click="openEdit(p.job)">
                   <i class="chip">Crew {{ cr.id }}</i>
