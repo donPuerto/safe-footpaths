@@ -538,8 +538,8 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .cell.out { opacity: 0.55; }
 .job { display: block; width: 100%; text-align: left; background: #f9fbff; padding: 6px 8px; border-left: 4px solid var(--c, var(--line)); }
 .job .reason { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.navrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.navrow .crewpick { min-width: 0; }
+.navrow { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.navrow .crewpick { flex: 1 1 auto; min-width: 0; }
 .holmenu { position: relative; flex: 0 0 auto; }
 .holmenu summary { list-style: none; cursor: pointer; white-space: nowrap; font-size: 13px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--bad); color: var(--bad); background: #fff5f4; }
 .holmenu summary::-webkit-details-marker { display: none; }
@@ -602,6 +602,8 @@ select.invalid, input.invalid { border-color: var(--bad); }
   .cell { scroll-snap-align: start; }
 }
 @media (max-width: 640px) {
+  .navrow .crewpick { flex-basis: 100%; }
+  .holmenu ul { left: 0; right: auto; }
   .weekgrid { grid-auto-columns: 86%; }
   .mgrid { gap: 2px; }
   .mcell { min-height: 64px; padding: 2px; border-radius: 6px; }
