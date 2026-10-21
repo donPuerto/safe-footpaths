@@ -24,28 +24,51 @@ watch(crewFilter, (v) => { try { localStorage.setItem('sf-crew', v) } catch {} }
 
 // ---- settings -> work days in the window (weekdays, minus public holidays) ----
 const settings = computed(() => Object.fromEntries((data.value?.settings ?? []).map((r) => [s(r.key), s(r.value)])))
-const crews = computed(() =>
-  [
-    { id: 'A', name: settings.value.crew_A || 'Crew A' },
-    { id: 'B', name: settings.value.crew_B || 'Crew B' },
-  ].filter((c) => crewFilter.value === 'all' || c.id === crewFilter.value),
-)
+const allCrews = computed(() => [
+  { id: 'A', name: settings.value.crew_A || 'Crew A' },
+  { id: 'B', name: settings.value.crew_B || 'Crew B' },
+])
+const crews = computed(() => allCrews.value.filter((c) => crewFilter.value === 'all' || c.id === crewFilter.value))
+const holidays = computed(() => new Set((settings.value.public_holidays || '').split(';').map((x) => x.trim()).filter(Boolean)))
 const workDays = computed(() => {
   const start = settings.value.window_start
   const end = settings.value.window_end
   if (!start || !end) return [...new Set((data.value?.plan ?? []).map((p) => s(p.day)))].sort()
-  const off = new Set((settings.value.public_holidays || '').split(';').map((x) => x.trim()))
   const out: string[] = []
   for (let d = new Date(start + 'T00:00:00Z'); d <= new Date(end + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + 1)) {
     const iso = d.toISOString().slice(0, 10)
-    if (d.getUTCDay() % 6 !== 0 && !off.has(iso)) out.push(iso)
+    if (d.getUTCDay() % 6 !== 0 && !holidays.value.has(iso)) out.push(iso)
   }
   return out
 })
-const dayLabel = (iso: string) =>
-  new Date(iso + 'T00:00:00Z').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
+const fmt = (iso: string, o: Intl.DateTimeFormatOptions) => new Date(iso + 'T00:00:00Z').toLocaleDateString('en-AU', { ...o, timeZone: 'UTC' })
+const dayLabel = (iso: string) => fmt(iso, { weekday: 'short', day: 'numeric', month: 'short' })
+
+// ---- calendar: Mon–Fri columns, one row per week that the plan touches ----
+const weeks = computed(() => {
+  const days = workDays.value
+  if (!days.length) return []
+  const monday = new Date(days[0] + 'T00:00:00Z')
+  monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7))
+  const out: { label: string; days: { iso: string; work: boolean; holiday: boolean }[] }[] = []
+  for (; monday.toISOString().slice(0, 10) <= days.at(-1)!; monday.setUTCDate(monday.getUTCDate() + 7)) {
+    const cells = Array.from({ length: 5 }, (_, i) => {
+      const d = new Date(monday)
+      d.setUTCDate(d.getUTCDate() + i)
+      const iso = d.toISOString().slice(0, 10)
+      return { iso, work: days.includes(iso), holiday: holidays.value.has(iso) }
+    })
+    const short = (iso: string) => fmt(iso, { day: 'numeric', month: 'short' })
+    out.push({ label: `Week ${out.length + 1} · ${short(cells[0]!.iso)} – ${short(cells[4]!.iso)}`, days: cells })
+  }
+  return out
+})
 
 const cell = (day: string, crew: string) => (data.value?.plan ?? []).filter((p) => s(p.day) === day && s(p.crew).split('+').includes(crew))
+// Each day: both-crew jobs once on top, then one lane per crew (the lanes are the drop targets).
+const bothJobs = (day: string) => (data.value?.plan ?? []).filter((p) => s(p.day) === day && s(p.crew) === 'A+B')
+const laneJobs = (day: string, crew: string) => (data.value?.plan ?? []).filter((p) => s(p.day) === day && s(p.crew) === crew)
+const crewClass = (crew: unknown) => 'crew-' + (s(crew) === 'A+B' ? 'AB' : s(crew))
 const lastRun = computed(() => (data.value?.runs ?? []).at(-1))
 
 // Latest override per job (the tab keeps one row per job, but be safe).
@@ -62,9 +85,35 @@ const lockedNow = (job: unknown) => {
   const o = overrides.value.get(s(job))
   return !!o && s(o.action) !== 'unlock'
 }
+// Saved moves the planner hasn't applied yet, shown as a dashed "moving here" note in the target lane.
+const movingInto = (day: string, crew: string) =>
+  pendingChanges.value.filter((o) => s(o.action) === 'move' && s(o.day) === day && s(o.crew).split('+').includes(crew))
+
+// ---- drag and drop (mouse): drop a job on a crew's lane -> the Move panel opens pre-filled, Dan presses Save ----
+const dragJob = ref('')
+const dropAt = ref('')
+function startDrag(e: DragEvent, job: unknown) {
+  dragJob.value = s(job)
+  e.dataTransfer?.setData('text/plain', s(job))
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+}
+function endDrag() { dragJob.value = ''; dropAt.value = '' }
+function leaveLane(e: DragEvent) {
+  if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) dropAt.value = ''
+}
+function dropOn(day: string, crew: string) {
+  const job = dragJob.value
+  endDrag()
+  if (!job) return
+  openEdit(job)
+  if (!editing.value) return
+  form.day = day
+  if (editing.value.techs <= 2) form.crew = crew
+  editing.value.dropped = true
+}
 
 // ---- Move / Lock panel ----
-const editing = ref<{ job: string; title: string; techs: number; current?: PlanRow } | null>(null)
+const editing = ref<{ job: string; title: string; techs: number; current?: PlanRow; dropped?: boolean } | null>(null)
 const form = reactive({ crew: 'A', day: '' })
 const passcode = ref(import.meta.client ? localStorage.getItem('sf-passcode') || '' : '')
 const saving = ref(false)
@@ -143,23 +192,47 @@ async function save(action: 'lock' | 'move' | 'unlock') {
       </div>
     </nav>
 
-    <!-- Crews by day -->
-    <section v-if="tab === 'plan' && data" class="days" :class="{ single: crewFilter !== 'all' }">
-      <article v-for="d in workDays" :key="d" class="day">
-        <h2>{{ dayLabel(d) }}</h2>
-        <div class="crews">
-          <div v-for="c in crews" :key="c.id" class="crew">
-            <h3>Crew {{ c.id }} <span class="muted">{{ c.name }}</span></h3>
-            <p v-if="!cell(d, c.id).length" class="muted small">Free</p>
-            <button v-for="p in cell(d, c.id)" :key="s(p.job) + p.part" class="job" @click="openEdit(p.job)">
-              <strong>{{ s(p.job) }}</strong> {{ org(p.organisation, p.job) }}
-              <span class="small">{{ p.suburb }} · {{ s(p.days) }}d {{ p.part }}</span>
-              <span class="small muted">{{ p.reason }}</span>
-              <span v-if="s(p.source).startsWith('Dan')" class="tag">🔒 {{ p.source }}</span>
-            </button>
-          </div>
+    <!-- Calendar: weeks as rows, Mon–Fri as columns (on a phone, swipe sideways through the days) -->
+    <section v-if="tab === 'plan' && data" class="cal">
+      <p class="legend small">
+        <span v-for="c in allCrews" :key="c.id" :class="crewClass(c.id)"><i class="chip">Crew {{ c.id }}</i> {{ c.name }}</span>
+        <span class="crew-AB"><i class="chip">Both</i> 4-person job</span>
+      </p>
+      <div v-for="w in weeks" :key="w.label" class="week">
+        <h2>{{ w.label }}</h2>
+        <div class="weekgrid">
+          <article v-for="c in w.days" :key="c.iso" class="cell" :class="{ off: c.holiday, out: !c.work && !c.holiday }">
+            <h3>{{ dayLabel(c.iso) }}</h3>
+            <p v-if="c.holiday" class="small muted">Public holiday · no work</p>
+            <p v-else-if="!c.work" class="small muted">Not in this plan</p>
+            <template v-else>
+              <button v-for="p in bothJobs(c.iso)" :key="s(p.job) + p.part" class="job crew-AB" draggable="true"
+                @dragstart="startDrag($event, p.job)" @dragend="endDrag" @click="openEdit(p.job)">
+                <i class="chip">Both</i>
+                <strong>{{ s(p.job) }}</strong> {{ org(p.organisation, p.job) }}
+                <span class="small">{{ p.suburb }} · {{ s(p.days) }}d {{ p.part }}</span>
+                <span class="small muted reason">{{ p.reason }}</span>
+                <span v-if="s(p.source).startsWith('Dan')" class="tag">🔒 {{ p.source }}</span>
+              </button>
+              <div v-for="cr in crews" :key="cr.id" class="lane" :class="[crewClass(cr.id), { drop: dropAt === c.iso + cr.id }]"
+                @dragover.prevent="dropAt = c.iso + cr.id" @dragleave="leaveLane" @drop.prevent="dropOn(c.iso, cr.id)">
+                <button v-for="p in laneJobs(c.iso, cr.id)" :key="s(p.job) + p.part" class="job" :class="crewClass(p.crew)" draggable="true"
+                  @dragstart="startDrag($event, p.job)" @dragend="endDrag" @click="openEdit(p.job)">
+                  <i class="chip">Crew {{ cr.id }}</i>
+                  <strong>{{ s(p.job) }}</strong> {{ org(p.organisation, p.job) }}
+                  <span class="small">{{ p.suburb }} · {{ s(p.days) }}d {{ p.part }}</span>
+                  <span class="small muted reason">{{ p.reason }}</span>
+                  <span v-if="s(p.source).startsWith('Dan')" class="tag">🔒 {{ p.source }}</span>
+                </button>
+                <p v-for="o in movingInto(c.iso, cr.id)" :key="s(o.job)" class="small ghost">↪ {{ s(o.job) }} moving here (next run)</p>
+                <p v-if="!laneJobs(c.iso, cr.id).length && !cell(c.iso, cr.id).length && !movingInto(c.iso, cr.id).length" class="small free">
+                  Crew {{ cr.id }} free
+                </p>
+              </div>
+            </template>
+          </article>
         </div>
-      </article>
+      </div>
     </section>
 
     <!-- Ranked backlog -->
@@ -196,8 +269,11 @@ async function save(action: 'lock' | 'move' | 'unlock') {
         <h2>{{ editing.title }}</h2>
         <p v-if="editing.current" class="small muted">Now: {{ dayLabel(s(editing.current.day)) }}, crew {{ editing.current.crew }}</p>
         <p v-else class="small muted">Not in the plan yet.</p>
+        <p v-if="editing.dropped" class="banner small">
+          Move to <b>{{ dayLabel(form.day) }}</b>, <b>{{ form.crew === 'A+B' ? 'both crews' : 'Crew ' + form.crew }}</b>? Press <b>Save move</b> to confirm.
+        </p>
 
-        <button v-if="editing.current" type="button" :disabled="saving || !passcode" @click="save('lock')">🔒 Lock where it is</button>
+        <button v-if="editing.current && !editing.dropped" type="button" :disabled="saving || !passcode" @click="save('lock')">🔒 Lock where it is</button>
 
         <label>Move to day
           <select v-model="form.day">
@@ -256,15 +332,28 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .tabs button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
 .crewpick button { padding: 5px 10px; font-size: 13px; border-radius: 999px; }
 .crewpick button.on { background: var(--accent); border-color: var(--accent); }
-.days.single .crews { grid-template-columns: 1fr; }
 .loading { display: grid; justify-items: center; gap: 10px; padding: 48px 16px; color: var(--muted); text-align: center; }
 .spinner { width: 28px; height: 28px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.days { display: grid; gap: 12px; }
-.day { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
-.crews { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.crew { min-width: 0; }
-.job { display: block; width: 100%; text-align: left; margin-bottom: 6px; background: #f9fbff; }
+.crew-A { --c: #0b5cad; }
+.crew-B { --c: #1a7f37; }
+.crew-AB { --c: #7a3fb0; }
+.chip { display: inline-block; font-style: normal; font-size: 11px; font-weight: 600; color: #fff; background: var(--c, var(--muted)); border-radius: 4px; padding: 0 5px; margin-right: 4px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0; }
+.cal { display: grid; gap: 18px; }
+.week h2 { margin-bottom: 6px; }
+.weekgrid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.cell { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px; min-height: 130px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.cell h3 { font-size: 13px; margin: 0 0 2px; }
+.cell.off { background: repeating-linear-gradient(45deg, #f1f2f4, #f1f2f4 6px, #e7e9ec 6px, #e7e9ec 12px); }
+.cell.out { opacity: 0.55; }
+.job { display: block; width: 100%; text-align: left; background: #f9fbff; padding: 6px 8px; border-left: 4px solid var(--c, var(--line)); }
+.job .reason { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.lane { display: grid; gap: 4px; min-height: 30px; border-radius: 8px; }
+.lane.drop { outline: 2px dashed var(--c); outline-offset: 2px; background: #f3f8ff; }
+.job[draggable='true'] { cursor: grab; }
+.ghost { margin: 0; border: 1px dashed var(--c); border-radius: 6px; padding: 4px 8px; color: var(--c); }
+.free { margin: 0; color: var(--muted); border: 1px dashed var(--line); border-radius: 6px; padding: 4px 8px; }
 .tag { display: inline-block; font-size: 12px; background: #eef2f7; border-radius: 6px; padding: 1px 6px; }
 .list { display: grid; gap: 8px; }
 .row { display: flex; gap: 12px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
@@ -279,10 +368,14 @@ select, input { padding: 8px; border: 1px solid var(--line); border-radius: 8px;
   h1 { font-size: 18px; }
   header { gap: 8px; }
   header .actions button, header .actions a { padding: 6px 10px; font-size: 14px; }
-  .crews { grid-template-columns: 1fr; }
   .row { flex-wrap: wrap; }
   .row > button { width: 100%; }
-  .day { padding: 10px; }
 }
+/* Narrow screens: a week becomes a sideways swipe, one or two days at a time */
+@media (max-width: 900px) {
+  .weekgrid { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 46%; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 4px; }
+  .cell { scroll-snap-align: start; }
+}
+@media (max-width: 640px) { .weekgrid { grid-auto-columns: 86%; } }
 @media (min-width: 641px) { .sheet { align-items: center; } .panel { border-radius: 14px; } }
 </style>
