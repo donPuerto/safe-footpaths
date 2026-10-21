@@ -92,19 +92,6 @@ const upcoming = computed(() => {
       return { ...h, soon: n <= 0 ? 'now' : n === 1 ? 'tomorrow' : `in ${n} days`, inPlan: workDays.value.length > 0 && h.start <= workDays.value.at(-1)! && h.end >= workDays.value[0]! }
     })
 })
-const holidayMenu = ref<HTMLDetailsElement | null>(null)
-function showHoliday(start: string) {
-  view.value = 'month'
-  monthKey.value = start.slice(0, 7)
-  if (holidayMenu.value) holidayMenu.value.open = false
-}
-
-// Week (the 2-week plan, Mon–Fri) or Month (whole month incl. weekends, to see holidays around the plan).
-const view = ref<'week' | 'month'>('week')
-onMounted(() => {
-  try { const v = localStorage.getItem('sf-view'); if (v === 'week' || v === 'month') view.value = v } catch {}
-})
-watch(view, (v) => { try { localStorage.setItem('sf-view', v) } catch {} })
 
 // ---- calendar: Mon–Fri columns, one row per week that the plan touches ----
 const weeks = computed(() => {
@@ -123,45 +110,6 @@ const weeks = computed(() => {
   }
   return out
 })
-
-// ---- month view: Mon–Sun grid; starts on the plan's first month ----
-const monthKey = ref('')
-watch(workDays, (d) => { if (!monthKey.value && d[0]) monthKey.value = d[0].slice(0, 7) }, { immediate: true })
-const shiftMonth = (n: number) => {
-  const [y, m] = monthKey.value.split('-').map(Number)
-  monthKey.value = new Date(Date.UTC(y!, m! - 1 + n, 1)).toISOString().slice(0, 7)
-}
-const monthLabel = computed(() => (monthKey.value ? fmt(monthKey.value + '-01', { month: 'long', year: 'numeric' }) : ''))
-const month = computed(() => {
-  if (!monthKey.value) return []
-  const first = monthKey.value + '-01'
-  const dow = (new Date(first + 'T00:00:00Z').getUTCDay() + 6) % 7
-  let iso = addDays(first, -dow)
-  const cells = []
-  // whole weeks until the month is covered
-  while (cells.length % 7 !== 0 || iso.slice(0, 7) <= monthKey.value) {
-    const wd = (new Date(iso + 'T00:00:00Z').getUTCDay() + 6) % 7
-    const school = isSchoolHoliday(iso)
-    cells.push({
-      iso,
-      num: Number(iso.slice(8)),
-      inMonth: iso.slice(0, 7) === monthKey.value,
-      weekend: wd > 4,
-      holiday: holidays.value.has(iso),
-      school,
-      // label once per week row, and on the 1st so a month that starts mid-holiday still says so
-      schoolStart: school && (wd === 0 || iso.endsWith('-01') || !isSchoolHoliday(addDays(iso, -1))),
-      work: workDays.value.includes(iso),
-    })
-    iso = addDays(iso, 1)
-  }
-  return cells
-})
-// Month cells are small: one entry per job (both-crew jobs once), filtered by the crew pills.
-const monthJobs = (day: string) =>
-  (data.value?.plan ?? [])
-    .filter((p) => s(p.day) === day && (crewFilter.value === 'all' || s(p.crew).split('+').includes(crewFilter.value)))
-    .sort((a, b) => s(a.crew).localeCompare(s(b.crew)))
 
 const cell = (day: string, crew: string) => (data.value?.plan ?? []).filter((p) => s(p.day) === day && s(p.crew).split('+').includes(crew))
 // Each day: both-crew jobs once on top, then one lane per crew (the lanes are the drop targets).
@@ -207,7 +155,7 @@ function dropOn(day: string, crew: string) {
   openEdit(job)
   if (!editing.value) return
   setFieldValue('day', day)
-  if (editing.value.techs <= 2 && crew) setFieldValue('crew', crew) // month cells have no crew lane: keep its crew
+  if (editing.value.techs <= 2) setFieldValue('crew', crew)
   editing.value.dropped = true
 }
 
@@ -321,27 +269,22 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
       </div>
       <div v-if="tab === 'plan'" class="navrow">
       <div class="tabs crewpick" aria-label="Calendar view and crew">
-        <button :class="{ on: view === 'week' }" @click="view = 'week'">Week</button>
-        <button :class="{ on: view === 'month' }" @click="view = 'month'">Month</button>
-        <span class="sep" />
         <button :class="{ on: crewFilter === 'all' }" @click="crewFilter = 'all'">Both crews</button>
         <button :class="{ on: crewFilter === 'A' }" @click="crewFilter = 'A'">Crew A</button>
         <button :class="{ on: crewFilter === 'B' }" @click="crewFilter = 'B'">Crew B</button>
       </div>
-      <!-- Upcoming VIC public holidays and school breaks (from Settings); click one to see it in Month view -->
-      <details ref="holidayMenu" class="holmenu">
+      <!-- Upcoming VIC public holidays and school breaks (from Settings) -->
+      <details class="holmenu">
         <summary>Upcoming holidays <b>{{ upcoming.length }}</b></summary>
         <ul>
           <li v-if="!upcoming.length" class="small muted">None listed in the Settings tab.</li>
-          <li v-for="h in upcoming" :key="h.kind + h.start">
-            <button type="button" @click="showHoliday(h.start)">
-              <i class="swatch" :class="h.kind === 'school' ? 'school' : 'off'" />
-              <span class="grow">
-                <strong>{{ h.name }}</strong>
-                <span class="small muted">{{ h.when }}</span>
-              </span>
-              <span class="when" :class="{ inplan: h.inPlan }">{{ h.inPlan ? 'in this plan' : h.soon }}</span>
-            </button>
+          <li v-for="h in upcoming" :key="h.kind + h.start" class="hol">
+            <i class="swatch" :class="h.kind === 'school' ? 'school' : 'off'" />
+            <span class="grow">
+              <strong>{{ h.name }}</strong>
+              <span class="small muted">{{ h.when }}</span>
+            </span>
+            <span class="when" :class="{ inplan: h.inPlan }">{{ h.inPlan ? 'in this plan' : h.soon }}</span>
           </li>
           <li class="small muted hint">Dates come from the Settings tab (public_holidays, school_holidays).</li>
         </ul>
@@ -358,32 +301,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
         <span><i class="swatch off" /> Public holiday</span>
       </p>
 
-      <!-- Month: Mon–Sun, whole month, holidays around the plan -->
-      <div v-if="view === 'month'" class="month">
-        <div class="monthbar">
-          <button aria-label="Previous month" @click="shiftMonth(-1)">‹</button>
-          <h2>{{ monthLabel }}</h2>
-          <button aria-label="Next month" @click="shiftMonth(1)">›</button>
-        </div>
-        <div class="mgrid">
-          <div v-for="w in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']" :key="w" class="dow">{{ w }}</div>
-          <div v-for="c in month" :key="c.iso" class="mcell"
-            :class="{ other: !c.inMonth, weekend: c.weekend, school: c.school, off: c.holiday, plan: c.work, drop: dropAt === c.iso }"
-            @dragover.prevent="c.work && (dropAt = c.iso)" @dragleave="leaveLane" @drop.prevent="c.work && dropOn(c.iso, '')">
-            <span class="dnum">{{ c.num }}</span>
-            <span v-if="c.holiday" class="mtag offtag">Public holiday</span>
-            <span v-else-if="c.schoolStart" class="mtag">School holidays</span>
-            <button v-for="p in monthJobs(c.iso)" :key="s(p.job) + p.crew" class="mjob" :class="crewClass(p.crew)" draggable="true"
-              :title="`${s(p.job)} ${org(p.organisation, p.job)} · ${p.suburb} · ${p.reason}`"
-              @dragstart="startDrag($event, p.job)" @dragend="endDrag" @click="openEdit(p.job)">
-              <b>{{ s(p.crew) === 'A+B' ? 'AB' : s(p.crew) }}</b> {{ s(p.job) }}<span class="sub"> {{ p.suburb }}</span>
-            </button>
-          </div>
-        </div>
-        <p class="small muted">Blue-edged days are in this plan. Drag a job onto one of them to move it; the crew stays the same unless you change it.</p>
-      </div>
-
-      <div v-for="w in view === 'week' ? weeks : []" :key="w.label" class="week">
+      <div v-for="w in weeks" :key="w.label" class="week">
         <h2>{{ w.label }}</h2>
         <div class="weekgrid">
           <article v-for="c in w.days" :key="c.iso" class="cell" :class="{ off: c.holiday, out: !c.work && !c.holiday, school: c.school }">
@@ -547,32 +465,15 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .holmenu[open] summary { background: var(--bad); color: #fff; }
 .holmenu summary b { margin-left: 2px; }
 .holmenu ul { position: absolute; right: 0; top: calc(100% + 6px); z-index: 10; width: min(340px, calc(100vw - 32px)); margin: 0; padding: 6px; list-style: none; background: var(--card); border: 1px solid var(--line); border-top: 3px solid var(--bad); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); display: grid; gap: 2px; }
-.holmenu li button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 0; border-radius: 8px; padding: 8px; }
-.holmenu li button:hover { background: #f6f7f9; }
+.holmenu li.hol { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 8px; }
+.holmenu li.hol + li.hol { border-top: 1px solid var(--line); }
 .holmenu .when { font-size: 12px; color: var(--bad); white-space: nowrap; }
 .holmenu .when.inplan { font-weight: 600; }
 .holmenu .hint { padding: 6px 8px 2px; }
-.crewpick .sep { flex: 0 0 1px; background: var(--line); margin: 2px 4px; }
 .swatch { display: inline-block; width: 14px; height: 10px; border-radius: 3px; vertical-align: middle; border: 1px solid var(--line); }
-.swatch.school, .cell.school, .mgrid .mcell.school { background: #fff3cc; border-color: #f0d58a; }
-.swatch.off, .mcell.off { background: repeating-linear-gradient(45deg, #f1f2f4, #f1f2f4 4px, #e2e5e9 4px, #e2e5e9 8px); }
+.swatch.school, .cell.school { background: #fff3cc; border-color: #f0d58a; }
+.swatch.off { background: repeating-linear-gradient(45deg, #f1f2f4, #f1f2f4 4px, #e2e5e9 4px, #e2e5e9 8px); }
 .mtag { align-self: flex-start; max-width: 100%; font-size: 11px; line-height: 1.5; background: #f0d58a; color: #5c4300; border-radius: 4px; padding: 0 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mtag.offtag { background: #dfe3e8; color: var(--ink); }
-.monthbar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.monthbar h2 { margin: 0; min-width: 150px; text-align: center; }
-.monthbar button { padding: 4px 12px; font-size: 18px; line-height: 1; }
-.mgrid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
-.dow { font-size: 12px; color: var(--muted); text-align: center; padding-bottom: 2px; }
-.mcell { background: var(--card); border: 1px solid var(--line); border-radius: 8px; min-height: 96px; padding: 4px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.mcell.weekend { background: #f3f4f6; }
-.mcell.other { opacity: 0.4; }
-.mcell.plan { border-color: var(--accent); box-shadow: inset 0 3px 0 var(--accent); }
-.mcell.drop { outline: 2px dashed var(--accent); outline-offset: 1px; }
-.dnum { font-size: 12px; font-weight: 600; }
-.mcell:not(.plan) .dnum { color: var(--muted); font-weight: 400; }
-.mjob { display: block; width: 100%; text-align: left; font-size: 11px; padding: 1px 4px; border: 0; border-left: 3px solid var(--c); border-radius: 4px; background: #eef3fa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: grab; }
-.mjob b { color: var(--c); }
-.mjob .sub { margin-left: 4px; color: var(--muted); }
 .lane { display: grid; gap: 4px; min-height: 30px; border-radius: 8px; }
 .lane.drop { outline: 2px dashed var(--c); outline-offset: 2px; background: #f3f8ff; }
 .job[draggable='true'] { cursor: grab; }
@@ -605,11 +506,6 @@ select.invalid, input.invalid { border-color: var(--bad); }
   .navrow .crewpick { flex-basis: 100%; }
   .holmenu ul { left: 0; right: auto; }
   .weekgrid { grid-auto-columns: 86%; }
-  .mgrid { gap: 2px; }
-  .mcell { min-height: 64px; padding: 2px; border-radius: 6px; }
-  .mjob { font-size: 10px; padding: 0 2px; }
-  .mjob .sub { display: none; }
-  .mtag { font-size: 9px; padding: 0 2px; }
 }
 @media (min-width: 641px) { .sheet { align-items: center; } .panel { border-radius: 14px; } }
 </style>

@@ -10,16 +10,15 @@ Browser ──► /api/plan ─────► n8n webhook sf-plan ────�
              (passcode)        (x-sf-key header)
 ```
 
-## Calendar: Week and Month
+## Calendar (week plan)
 
-The **Plan** tab is a calendar with a **Week | Month** switch. The page remembers the last choice on each device.
+The **Plan** tab is a week calendar for the 2-week plan: weeks as rows, Mon–Fri as columns, and one lane per crew
+in each day.
 
-- **Week** shows the 2-week plan, Mon–Fri, with one lane per crew in each day. Drag a job onto a crew's lane to move it.
-  On a phone, swipe sideways through the days.
-- **Month** shows the whole month, Mon–Sun, with ‹ › to change month. Days in the plan have a blue edge. Drag a job onto a
-  plan day to move it (it keeps its crew).
-- Both views shade **VIC school holidays** (yellow) and **public holidays** (hatched). They read the dates from the Sheet's
-  *Settings* tab (`school_holidays`, `public_holidays`), the same dates the planner uses.
+- Drag a job onto a crew's lane to move it. On a phone, swipe sideways through the days and tap a job.
+- **VIC school holidays** are shaded yellow and **public holidays** are hatched. The red **Upcoming holidays** list (top
+  right) shows the next ones with their dates. All of these come from the Sheet's *Settings* tab
+  (`school_holidays`, `public_holidays`), the same dates the planner uses.
 - Dropping a job or clicking it opens the Move panel. It checks the move before saving: an N-day job needs N work days
   left, a 4-person job needs both crews, and the passcode is required (VeeValidate). The passcode field starts empty every
   time the panel opens.
