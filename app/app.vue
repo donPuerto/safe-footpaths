@@ -45,25 +45,79 @@ const workDays = computed(() => {
 const fmt = (iso: string, o: Intl.DateTimeFormatOptions) => new Date(iso + 'T00:00:00Z').toLocaleDateString('en-AU', { ...o, timeZone: 'UTC' })
 const dayLabel = (iso: string) => fmt(iso, { weekday: 'short', day: 'numeric', month: 'short' })
 
+// VIC school holidays from Settings ("2026-09-21..2026-10-02;2026-12-19..2027-01-26")
+const schoolHols = computed(() =>
+  (settings.value.school_holidays || '').split(';').map((r) => r.split('..').map((x) => x.trim())).filter((r) => r[0] && r[1]),
+)
+const isSchoolHoliday = (iso: string) => schoolHols.value.some(([a, b]) => iso >= a! && iso <= b!)
+const addDays = (iso: string, n: number) => {
+  const d = new Date(iso + 'T00:00:00Z')
+  d.setUTCDate(d.getUTCDate() + n)
+  return d.toISOString().slice(0, 10)
+}
+
+// Week (the 2-week plan, Mon–Fri) or Month (whole month incl. weekends, to see holidays around the plan).
+const view = ref<'week' | 'month'>('week')
+onMounted(() => {
+  try { const v = localStorage.getItem('sf-view'); if (v === 'week' || v === 'month') view.value = v } catch {}
+})
+watch(view, (v) => { try { localStorage.setItem('sf-view', v) } catch {} })
+
 // ---- calendar: Mon–Fri columns, one row per week that the plan touches ----
 const weeks = computed(() => {
   const days = workDays.value
   if (!days.length) return []
   const monday = new Date(days[0] + 'T00:00:00Z')
   monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7))
-  const out: { label: string; days: { iso: string; work: boolean; holiday: boolean }[] }[] = []
+  const out: { label: string; days: { iso: string; work: boolean; holiday: boolean; school: boolean }[] }[] = []
   for (; monday.toISOString().slice(0, 10) <= days.at(-1)!; monday.setUTCDate(monday.getUTCDate() + 7)) {
     const cells = Array.from({ length: 5 }, (_, i) => {
-      const d = new Date(monday)
-      d.setUTCDate(d.getUTCDate() + i)
-      const iso = d.toISOString().slice(0, 10)
-      return { iso, work: days.includes(iso), holiday: holidays.value.has(iso) }
+      const iso = addDays(monday.toISOString().slice(0, 10), i)
+      return { iso, work: days.includes(iso), holiday: holidays.value.has(iso), school: isSchoolHoliday(iso) }
     })
     const short = (iso: string) => fmt(iso, { day: 'numeric', month: 'short' })
     out.push({ label: `Week ${out.length + 1} · ${short(cells[0]!.iso)} – ${short(cells[4]!.iso)}`, days: cells })
   }
   return out
 })
+
+// ---- month view: Mon–Sun grid; starts on the plan's first month ----
+const monthKey = ref('')
+watch(workDays, (d) => { if (!monthKey.value && d[0]) monthKey.value = d[0].slice(0, 7) }, { immediate: true })
+const shiftMonth = (n: number) => {
+  const [y, m] = monthKey.value.split('-').map(Number)
+  monthKey.value = new Date(Date.UTC(y!, m! - 1 + n, 1)).toISOString().slice(0, 7)
+}
+const monthLabel = computed(() => (monthKey.value ? fmt(monthKey.value + '-01', { month: 'long', year: 'numeric' }) : ''))
+const month = computed(() => {
+  if (!monthKey.value) return []
+  const first = monthKey.value + '-01'
+  const dow = (new Date(first + 'T00:00:00Z').getUTCDay() + 6) % 7
+  let iso = addDays(first, -dow)
+  const cells = []
+  // whole weeks until the month is covered
+  while (cells.length % 7 !== 0 || iso.slice(0, 7) <= monthKey.value) {
+    const wd = (new Date(iso + 'T00:00:00Z').getUTCDay() + 6) % 7
+    const school = isSchoolHoliday(iso)
+    cells.push({
+      iso,
+      num: Number(iso.slice(8)),
+      inMonth: iso.slice(0, 7) === monthKey.value,
+      weekend: wd > 4,
+      holiday: holidays.value.has(iso),
+      school,
+      schoolStart: school && (wd === 0 || !isSchoolHoliday(addDays(iso, -1))), // label once per week row
+      work: workDays.value.includes(iso),
+    })
+    iso = addDays(iso, 1)
+  }
+  return cells
+})
+// Month cells are small: one entry per job (both-crew jobs once), filtered by the crew pills.
+const monthJobs = (day: string) =>
+  (data.value?.plan ?? [])
+    .filter((p) => s(p.day) === day && (crewFilter.value === 'all' || s(p.crew).split('+').includes(crewFilter.value)))
+    .sort((a, b) => s(a.crew).localeCompare(s(b.crew)))
 
 const cell = (day: string, crew: string) => (data.value?.plan ?? []).filter((p) => s(p.day) === day && s(p.crew).split('+').includes(crew))
 // Each day: both-crew jobs once on top, then one lane per crew (the lanes are the drop targets).
@@ -109,7 +163,7 @@ function dropOn(day: string, crew: string) {
   openEdit(job)
   if (!editing.value) return
   setFieldValue('day', day)
-  if (editing.value.techs <= 2) setFieldValue('crew', crew)
+  if (editing.value.techs <= 2 && crew) setFieldValue('crew', crew) // month cells have no crew lane: keep its crew
   editing.value.dropped = true
 }
 
@@ -221,7 +275,10 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
         <button :class="{ on: tab === 'ranked' }" @click="tab = 'ranked'">Ranked <b>{{ data.ranked.length }}</b></button>
         <button :class="{ on: tab === 'human' }" @click="tab = 'human'">Needs a human <b>{{ data.needsHuman.length }}</b></button>
       </div>
-      <div v-if="tab === 'plan'" class="tabs crewpick" aria-label="Show crew">
+      <div v-if="tab === 'plan'" class="tabs crewpick" aria-label="Calendar view and crew">
+        <button :class="{ on: view === 'week' }" @click="view = 'week'">Week</button>
+        <button :class="{ on: view === 'month' }" @click="view = 'month'">Month</button>
+        <span class="sep" />
         <button :class="{ on: crewFilter === 'all' }" @click="crewFilter = 'all'">Both crews</button>
         <button :class="{ on: crewFilter === 'A' }" @click="crewFilter = 'A'">Crew A</button>
         <button :class="{ on: crewFilter === 'B' }" @click="crewFilter = 'B'">Crew B</button>
@@ -233,12 +290,41 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
       <p class="legend small">
         <span v-for="c in allCrews" :key="c.id" :class="crewClass(c.id)"><i class="chip">Crew {{ c.id }}</i> {{ c.name }}</span>
         <span class="crew-AB"><i class="chip">Both</i> 4-person job</span>
+        <span><i class="swatch school" /> VIC school holidays</span>
+        <span><i class="swatch off" /> Public holiday</span>
       </p>
-      <div v-for="w in weeks" :key="w.label" class="week">
+
+      <!-- Month: Mon–Sun, whole month, holidays around the plan -->
+      <div v-if="view === 'month'" class="month">
+        <div class="monthbar">
+          <button aria-label="Previous month" @click="shiftMonth(-1)">‹</button>
+          <h2>{{ monthLabel }}</h2>
+          <button aria-label="Next month" @click="shiftMonth(1)">›</button>
+        </div>
+        <div class="mgrid">
+          <div v-for="w in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']" :key="w" class="dow">{{ w }}</div>
+          <div v-for="c in month" :key="c.iso" class="mcell"
+            :class="{ other: !c.inMonth, weekend: c.weekend, school: c.school, off: c.holiday, plan: c.work, drop: dropAt === c.iso }"
+            @dragover.prevent="c.work && (dropAt = c.iso)" @dragleave="leaveLane" @drop.prevent="c.work && dropOn(c.iso, '')">
+            <span class="dnum">{{ c.num }}</span>
+            <span v-if="c.holiday" class="mtag offtag">Public holiday</span>
+            <span v-else-if="c.schoolStart" class="mtag">School holidays</span>
+            <button v-for="p in monthJobs(c.iso)" :key="s(p.job) + p.crew" class="mjob" :class="crewClass(p.crew)" draggable="true"
+              :title="`${s(p.job)} ${org(p.organisation, p.job)} · ${p.suburb} · ${p.reason}`"
+              @dragstart="startDrag($event, p.job)" @dragend="endDrag" @click="openEdit(p.job)">
+              <b>{{ s(p.crew) === 'A+B' ? 'AB' : s(p.crew) }}</b> {{ s(p.job) }}<span class="sub"> {{ p.suburb }}</span>
+            </button>
+          </div>
+        </div>
+        <p class="small muted">Blue-edged days are in this plan. Drag a job onto one of them to move it; the crew stays the same unless you change it.</p>
+      </div>
+
+      <div v-for="w in view === 'week' ? weeks : []" :key="w.label" class="week">
         <h2>{{ w.label }}</h2>
         <div class="weekgrid">
-          <article v-for="c in w.days" :key="c.iso" class="cell" :class="{ off: c.holiday, out: !c.work && !c.holiday }">
+          <article v-for="c in w.days" :key="c.iso" class="cell" :class="{ off: c.holiday, out: !c.work && !c.holiday, school: c.school }">
             <h3>{{ dayLabel(c.iso) }}</h3>
+            <span v-if="c.school" class="mtag">VIC school holidays</span>
             <p v-if="c.holiday" class="small muted">Public holiday · no work</p>
             <p v-else-if="!c.work" class="small muted">Not in this plan</p>
             <template v-else>
@@ -388,6 +474,26 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .cell.out { opacity: 0.55; }
 .job { display: block; width: 100%; text-align: left; background: #f9fbff; padding: 6px 8px; border-left: 4px solid var(--c, var(--line)); }
 .job .reason { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.crewpick .sep { flex: 0 0 1px; background: var(--line); margin: 2px 4px; }
+.swatch { display: inline-block; width: 14px; height: 10px; border-radius: 3px; vertical-align: middle; border: 1px solid var(--line); }
+.swatch.school, .cell.school, .mgrid .mcell.school { background: #fff3cc; border-color: #f0d58a; }
+.swatch.off, .mcell.off { background: repeating-linear-gradient(45deg, #f1f2f4, #f1f2f4 4px, #e2e5e9 4px, #e2e5e9 8px); }
+.mtag { align-self: flex-start; max-width: 100%; font-size: 11px; line-height: 1.5; background: #f0d58a; color: #5c4300; border-radius: 4px; padding: 0 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mtag.offtag { background: #dfe3e8; color: var(--ink); }
+.monthbar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.monthbar h2 { margin: 0; min-width: 150px; text-align: center; }
+.monthbar button { padding: 4px 12px; font-size: 18px; line-height: 1; }
+.mgrid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.dow { font-size: 12px; color: var(--muted); text-align: center; padding-bottom: 2px; }
+.mcell { background: var(--card); border: 1px solid var(--line); border-radius: 8px; min-height: 96px; padding: 4px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.mcell.weekend { background: #f3f4f6; }
+.mcell.other { opacity: 0.4; }
+.mcell.plan { border-color: var(--accent); box-shadow: inset 0 3px 0 var(--accent); }
+.mcell.drop { outline: 2px dashed var(--accent); outline-offset: 1px; }
+.dnum { font-size: 12px; font-weight: 600; }
+.mcell:not(.plan) .dnum { color: var(--muted); font-weight: 400; }
+.mjob { display: block; width: 100%; text-align: left; font-size: 11px; padding: 1px 4px; border: 0; border-left: 3px solid var(--c); border-radius: 4px; background: #eef3fa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: grab; }
+.mjob b { color: var(--c); }
 .lane { display: grid; gap: 4px; min-height: 30px; border-radius: 8px; }
 .lane.drop { outline: 2px dashed var(--c); outline-offset: 2px; background: #f3f8ff; }
 .job[draggable='true'] { cursor: grab; }
@@ -416,6 +522,13 @@ select.invalid, input.invalid { border-color: var(--bad); }
   .weekgrid { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 46%; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 4px; }
   .cell { scroll-snap-align: start; }
 }
-@media (max-width: 640px) { .weekgrid { grid-auto-columns: 86%; } }
+@media (max-width: 640px) {
+  .weekgrid { grid-auto-columns: 86%; }
+  .mgrid { gap: 2px; }
+  .mcell { min-height: 64px; padding: 2px; border-radius: 6px; }
+  .mjob { font-size: 10px; padding: 0 2px; }
+  .mjob .sub { display: none; }
+  .mtag { font-size: 9px; padding: 0 2px; }
+}
 @media (min-width: 641px) { .sheet { align-items: center; } .panel { border-radius: 14px; } }
 </style>
