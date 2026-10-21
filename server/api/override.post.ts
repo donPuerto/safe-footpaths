@@ -10,10 +10,12 @@ const same = (a: string, b: string) => {
 // POST /api/override – Dan moves, locks or unlocks a job.
 // Saved to the Overrides tab (one row per job, latest wins); the next workflow run keeps it.
 export default defineEventHandler(async (event) => {
-  const { n8nWebhookBase, n8nWebhookKey, appPasscode } = useRuntimeConfig()
+  const { n8nWebhookBase, n8nWebhookKey } = useRuntimeConfig()
+  // Read at request time (not baked in at build), so a new passcode in Vercel needs no code change.
+  const appPasscode = String(process.env.APP_PASSCODE ?? useRuntimeConfig().appPasscode ?? '').trim()
   const body = await readBody<OverrideRequest>(event)
 
-  if (!appPasscode || !same(String(body?.passcode ?? ''), appPasscode))
+  if (!appPasscode || !same(String(body?.passcode ?? '').trim(), appPasscode))
     throw createError({ statusCode: 401, statusMessage: 'Wrong passcode' })
 
   const job = String(body.job ?? '').trim()
