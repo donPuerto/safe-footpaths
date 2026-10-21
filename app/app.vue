@@ -2,17 +2,34 @@
 import type { PlanData, PlanRow, OverrideRow } from '../shared/types'
 
 const config = useRuntimeConfig()
-const { data, pending, error, refresh } = useFetch<PlanData>('/api/plan', { server: false })
+// First load may come from Vercel's edge cache (fast). Refresh / after a save asks for fresh data.
+const fresh = ref(0)
+const { data, pending, error } = useFetch<PlanData>('/api/plan', {
+  server: false,
+  query: computed(() => (fresh.value ? { fresh: fresh.value } : {})),
+})
+const reloadFresh = () => { fresh.value = Date.now() }
 
 const tab = ref<'plan' | 'ranked' | 'human'>('plan')
 const s = (v: unknown) => String(v ?? '').trim()
+// "Councils and Shires - 13661" -> "Councils and Shires" (the job number is already shown in bold)
+const org = (name: unknown, job: unknown) => s(name).replace(new RegExp(`\\s*-\\s*${s(job)}$`), '')
+
+// A crew lead on a phone only wants their own crew. Remembered per device.
+const crewFilter = ref<'all' | 'A' | 'B'>('all')
+onMounted(() => {
+  try { const v = localStorage.getItem('sf-crew'); if (v === 'A' || v === 'B') crewFilter.value = v } catch {}
+})
+watch(crewFilter, (v) => { try { localStorage.setItem('sf-crew', v) } catch {} })
 
 // ---- settings -> work days in the window (weekdays, minus public holidays) ----
 const settings = computed(() => Object.fromEntries((data.value?.settings ?? []).map((r) => [s(r.key), s(r.value)])))
-const crews = computed(() => [
-  { id: 'A', name: settings.value.crew_A || 'Crew A' },
-  { id: 'B', name: settings.value.crew_B || 'Crew B' },
-])
+const crews = computed(() =>
+  [
+    { id: 'A', name: settings.value.crew_A || 'Crew A' },
+    { id: 'B', name: settings.value.crew_B || 'Crew B' },
+  ].filter((c) => crewFilter.value === 'all' || c.id === crewFilter.value),
+)
 const workDays = computed(() => {
   const start = settings.value.window_start
   const end = settings.value.window_end
@@ -58,7 +75,7 @@ function openEdit(job: unknown) {
   const r = data.value?.ranked.find((x) => s(x.job) === id)
   const current = data.value?.plan.find((p) => s(p.job) === id)
   const techs = Number(r?.techs ?? current?.techs ?? 2)
-  editing.value = { job: id, title: `${id} · ${r?.organisation || current?.organisation || ''}`, techs, current }
+  editing.value = { job: id, title: `${id} · ${org(r?.organisation || current?.organisation, id)}`, techs, current }
   form.crew = techs > 2 ? 'A+B' : s(current?.crew) || 'A'
   form.day = s(current?.day) || workDays.value[0] || ''
   message.value = ''
@@ -76,7 +93,7 @@ async function save(action: 'lock' | 'move' | 'unlock') {
     await $fetch('/api/override', { method: 'POST', body: { ...body, passcode: passcode.value } })
     localStorage.setItem('sf-passcode', passcode.value)
     message.value = action === 'unlock' ? 'Unlocked. The next run places it again.' : 'Saved. The next workflow run keeps it.'
-    await refresh()
+    reloadFresh()
   } catch (e: any) {
     message.value = e?.statusCode === 401 ? 'Wrong passcode.' : e?.statusMessage || e?.data?.statusMessage || 'Could not save.'
     if (e?.statusCode === 401) localStorage.removeItem('sf-passcode')
@@ -98,25 +115,36 @@ async function save(action: 'lock' | 'move' | 'unlock') {
         </p>
       </div>
       <div class="actions">
-        <button @click="refresh()" :disabled="pending">{{ pending ? 'Loading…' : 'Refresh' }}</button>
+        <button @click="reloadFresh()" :disabled="pending">{{ pending ? 'Loading…' : 'Refresh' }}</button>
         <a v-if="config.public.sheetUrl" :href="config.public.sheetUrl" target="_blank" rel="noopener">Open Google Sheet</a>
       </div>
     </header>
 
     <p v-if="error" class="banner bad">Couldn't load the plan: {{ error.statusMessage || error.message }}</p>
+    <div v-if="pending && !data" class="loading">
+      <div class="spinner" />
+      <p>Loading the plan from the Google Sheet… this takes a few seconds.</p>
+    </div>
     <p v-if="pendingChanges.length" class="banner">
       {{ pendingChanges.length }} change(s) by Dan saved since the last run — run the workflow to apply:
       {{ pendingChanges.map((o) => `${s(o.job)} ${s(o.action)}`).join(', ') }}
     </p>
 
-    <nav>
-      <button :class="{ on: tab === 'plan' }" @click="tab = 'plan'">Crews by day</button>
-      <button :class="{ on: tab === 'ranked' }" @click="tab = 'ranked'">Ranked ({{ data?.ranked.length ?? 0 }})</button>
-      <button :class="{ on: tab === 'human' }" @click="tab = 'human'">Needs a human ({{ data?.needsHuman.length ?? 0 }})</button>
+    <nav v-if="data">
+      <div class="tabs">
+        <button :class="{ on: tab === 'plan' }" @click="tab = 'plan'">Plan</button>
+        <button :class="{ on: tab === 'ranked' }" @click="tab = 'ranked'">Ranked <b>{{ data.ranked.length }}</b></button>
+        <button :class="{ on: tab === 'human' }" @click="tab = 'human'">Needs a human <b>{{ data.needsHuman.length }}</b></button>
+      </div>
+      <div v-if="tab === 'plan'" class="tabs crewpick" aria-label="Show crew">
+        <button :class="{ on: crewFilter === 'all' }" @click="crewFilter = 'all'">Both crews</button>
+        <button :class="{ on: crewFilter === 'A' }" @click="crewFilter = 'A'">Crew A</button>
+        <button :class="{ on: crewFilter === 'B' }" @click="crewFilter = 'B'">Crew B</button>
+      </div>
     </nav>
 
     <!-- Crews by day -->
-    <section v-if="tab === 'plan'" class="days">
+    <section v-if="tab === 'plan' && data" class="days" :class="{ single: crewFilter !== 'all' }">
       <article v-for="d in workDays" :key="d" class="day">
         <h2>{{ dayLabel(d) }}</h2>
         <div class="crews">
@@ -124,7 +152,7 @@ async function save(action: 'lock' | 'move' | 'unlock') {
             <h3>Crew {{ c.id }} <span class="muted">{{ c.name }}</span></h3>
             <p v-if="!cell(d, c.id).length" class="muted small">Free</p>
             <button v-for="p in cell(d, c.id)" :key="s(p.job) + p.part" class="job" @click="openEdit(p.job)">
-              <strong>{{ s(p.job) }}</strong> {{ p.organisation }}
+              <strong>{{ s(p.job) }}</strong> {{ org(p.organisation, p.job) }}
               <span class="small">{{ p.suburb }} · {{ s(p.days) }}d {{ p.part }}</span>
               <span class="small muted">{{ p.reason }}</span>
               <span v-if="s(p.source).startsWith('Dan')" class="tag">🔒 {{ p.source }}</span>
@@ -139,7 +167,7 @@ async function save(action: 'lock' | 'move' | 'unlock') {
       <div v-for="r in data?.ranked ?? []" :key="s(r.job)" class="row">
         <div class="rank">{{ s(r.rank) }}</div>
         <div class="grow">
-          <strong>{{ s(r.job) }}</strong> {{ r.organisation }}
+          <strong>{{ s(r.job) }}</strong> {{ org(r.organisation, r.job) }}
           <span class="small muted">{{ r.suburb }} · {{ s(r.techs) }} techs · {{ s(r.days) }} day(s)</span>
           <div class="small">{{ r.reason }}</div>
           <div class="small" :class="s(r.planned).startsWith('Not') ? 'bad' : 'ok'">
@@ -221,8 +249,17 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .banner { background: #fff8e1; border: 1px solid #f0d58a; border-radius: 8px; padding: 10px 12px; }
 .banner.bad { background: #fdecea; border-color: #f3b8b2; }
-nav { display: flex; gap: 6px; margin: 16px 0; overflow-x: auto; }
-nav button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px 0; margin: 6px 0 10px; display: grid; gap: 8px; }
+.tabs { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.tabs button { white-space: nowrap; flex: 0 0 auto; }
+.tabs button b { font-weight: 600; margin-left: 2px; }
+.tabs button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+.crewpick button { padding: 5px 10px; font-size: 13px; border-radius: 999px; }
+.crewpick button.on { background: var(--accent); border-color: var(--accent); }
+.days.single .crews { grid-template-columns: 1fr; }
+.loading { display: grid; justify-items: center; gap: 10px; padding: 48px 16px; color: var(--muted); text-align: center; }
+.spinner { width: 28px; height: 28px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .days { display: grid; gap: 12px; }
 .day { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
 .crews { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -238,8 +275,14 @@ nav button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
 label { display: grid; gap: 4px; font-size: 13px; }
 select, input { padding: 8px; border: 1px solid var(--line); border-radius: 8px; }
 @media (max-width: 640px) {
+  .page { padding: 12px; }
+  h1 { font-size: 18px; }
+  header { gap: 8px; }
+  header .actions button, header .actions a { padding: 6px 10px; font-size: 14px; }
   .crews { grid-template-columns: 1fr; }
   .row { flex-wrap: wrap; }
+  .row > button { width: 100%; }
+  .day { padding: 10px; }
 }
 @media (min-width: 641px) { .sheet { align-items: center; } .panel { border-radius: 14px; } }
 </style>
