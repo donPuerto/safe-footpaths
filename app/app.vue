@@ -159,6 +159,33 @@ function dropOn(day: string, crew: string) {
   editing.value.dropped = true
 }
 
+// ---- after a save the web API re-runs the planner (~1 min): watch for the new run, then show it ----
+// Fresh reads cost ~14 Google Sheets reads (quota 60/min), so check every 30 s, at most 6 times.
+const replanning = ref(false)
+const justUpdated = ref(false)
+let runBefore = ''
+let replanTimer: ReturnType<typeof setInterval> | undefined
+function startReplanWatch() {
+  runBefore = s(lastRun.value?.run_at)
+  replanning.value = true
+  justUpdated.value = false
+  let tries = 0
+  clearInterval(replanTimer)
+  replanTimer = setInterval(() => {
+    if (++tries > 6) { clearInterval(replanTimer); replanning.value = false; return }
+    reloadFresh()
+  }, 30000)
+}
+watch(lastRun, (r) => {
+  if (replanning.value && s(r?.run_at) && s(r?.run_at) !== runBefore) {
+    clearInterval(replanTimer)
+    replanning.value = false
+    justUpdated.value = true
+    setTimeout(() => { justUpdated.value = false }, 8000)
+  }
+})
+onBeforeUnmount(() => clearInterval(replanTimer))
+
 // ---- Move / Lock panel ----
 const editing = ref<{ job: string; title: string; techs: number; days: number; current?: PlanRow; dropped?: boolean } | null>(null)
 const saving = ref(false)
@@ -221,8 +248,9 @@ async function save(action: 'lock' | 'move' | 'unlock') {
         ? { job: editing.value.job, action, crew: s(editing.value.current.crew), day: s(editing.value.current.day) }
         : { job: editing.value.job, action, crew: crew.value, day: day.value }
     await $fetch('/api/override', { method: 'POST', body: { ...body, passcode: passcode.value } })
-    message.value = action === 'unlock' ? 'Unlocked. The next run places it again.' : 'Saved. The next workflow run keeps it.'
+    message.value = (action === 'unlock' ? 'Unlocked.' : 'Saved.') + ' Re-planning now – the calendar updates by itself in about a minute.'
     reloadFresh()
+    startReplanWatch()
   } catch (e: any) {
     if (e?.statusCode === 401) setFieldError('passcode', 'Wrong passcode.')
     else message.value = e?.statusMessage || e?.data?.statusMessage || 'Could not save.'
@@ -260,9 +288,13 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
       <div class="spinner" />
       <p>Loading the plan from the Google Sheet… this takes a few seconds.</p>
     </div>
-    <p v-if="pendingChanges.length" class="banner">
-      {{ pendingChanges.length }} change(s) by Dan saved since the last run — run the workflow to apply:
-      {{ pendingChanges.map((o) => `${s(o.job)} ${s(o.action)}`).join(', ') }}
+    <p v-if="replanning" class="banner replan">
+      <span class="spinner small-spin" /> Re-planning with your change… the calendar updates by itself in about a minute.
+    </p>
+    <p v-else-if="justUpdated" class="banner done">✓ Plan updated with your change.</p>
+    <p v-else-if="pendingChanges.length" class="banner">
+      {{ pendingChanges.length }} change(s) saved but not in the plan yet:
+      {{ pendingChanges.map((o) => `${s(o.job)} ${s(o.action)}`).join(', ') }} — press Refresh in a minute.
     </p>
 
     <nav v-if="data">
@@ -332,7 +364,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                   <span class="small muted reason">{{ p.reason }}</span>
                   <span v-if="s(p.source).startsWith('Dan')" class="tag">🔒 {{ p.source }}</span>
                 </button>
-                <p v-for="o in movingInto(c.iso, cr.id)" :key="s(o.job)" class="small ghost">↪ {{ s(o.job) }} moving here (next run)</p>
+                <p v-for="o in movingInto(c.iso, cr.id)" :key="s(o.job)" class="small ghost">↪ {{ s(o.job) }} moving here (re-planning…)</p>
                 <p v-if="!laneJobs(c.iso, cr.id).length && !cell(c.iso, cr.id).length && !movingInto(c.iso, cr.id).length" class="small free">
                   Crew {{ cr.id }} free
                 </p>
@@ -381,7 +413,8 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
           Move to <b>{{ dayLabel(day) }}</b>, <b>{{ crew === 'A+B' ? 'both crews' : 'Crew ' + crew }}</b>? Press <b>Save move</b> to confirm.
         </p>
 
-        <button v-if="editing.current && !editing.dropped" type="button" :disabled="saving" @click="saveWithPasscode('lock')">🔒 Lock where it is</button>
+        <p v-if="replanning" class="banner small">Wait until the re-plan with your last change finishes (about a minute), then make the next change.</p>
+        <button v-if="editing.current && !editing.dropped" type="button" :disabled="saving || replanning" @click="saveWithPasscode('lock')">🔒 Lock where it is</button>
 
         <label>Move to day
           <select v-model="day" :class="{ invalid: errors.day }">
@@ -409,12 +442,12 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
         </label>
 
         <div class="actions">
-          <button type="submit" class="primary" :disabled="saving">Save move</button>
-          <button v-if="lockedNow(editing.job)" type="button" :disabled="saving" @click="saveWithPasscode('unlock')">Unlock</button>
+          <button type="submit" class="primary" :disabled="saving || replanning">Save move</button>
+          <button v-if="lockedNow(editing.job)" type="button" :disabled="saving || replanning" @click="saveWithPasscode('unlock')">Unlock</button>
           <button type="button" @click="closeEdit">Close</button>
         </div>
         <p v-if="message" class="small" :class="/Saved|Unlocked/.test(message) ? 'ok' : 'bad'">{{ message }}</p>
-        <p class="small muted">Changes go to the Overrides tab. The plan updates when the workflow runs again.</p>
+        <p class="small muted">Changes go to the Overrides tab, and the plan is re-made straight away (about a minute).</p>
       </form>
     </div>
   </div>
@@ -439,6 +472,9 @@ button:disabled { opacity: 0.5; cursor: default; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .banner { background: #fff8e1; border: 1px solid #f0d58a; border-radius: 8px; padding: 10px 12px; }
+.banner.replan { display: flex; align-items: center; gap: 10px; background: #eef4fb; border-color: #b9d1ec; }
+.banner.done { background: #e9f6ec; border-color: #a8d5b3; color: var(--ok); }
+.banner .small-spin { width: 16px; height: 16px; border-width: 2px; flex: 0 0 auto; }
 .banner.bad { background: #fdecea; border-color: #f3b8b2; }
 nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px 0; margin: 6px 0 10px; display: grid; gap: 8px; }
 .tabs { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
