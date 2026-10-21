@@ -189,6 +189,7 @@ const { defineField, errors, handleSubmit, validateField, resetForm, setFieldVal
 const [day] = defineField('day')
 const [crew] = defineField('crew')
 const [passcode] = defineField('passcode')
+const passLocked = ref(true) // read-only until focused, so no autofill
 // An old version remembered the passcode on the device; forget it.
 onMounted(() => { try { localStorage.removeItem('sf-passcode') } catch {} })
 
@@ -201,11 +202,13 @@ function openEdit(job: unknown) {
   editing.value = { job: id, title: `${id} · ${org(r?.organisation || current?.organisation, id)}`, techs, days, current }
   // Fresh form each time: passcode always starts empty.
   resetForm({ values: { crew: techs > 2 ? 'A+B' : s(current?.crew) || 'A', day: s(current?.day) || workDays.value[0] || '', passcode: '' } })
+  passLocked.value = true
   message.value = ''
 }
 function closeEdit() {
   editing.value = null
   resetForm({ values: { day: '', crew: 'A', passcode: '' } })
+  passLocked.value = true
 }
 
 async function save(action: 'lock' | 'move' | 'unlock') {
@@ -396,7 +399,9 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
         </label>
 
         <label>Passcode
-          <input v-model="passcode" type="password" autocomplete="off" :class="{ invalid: errors.passcode }" />
+          <!-- Stop the browser's password manager refilling it: "new-password" + read-only until tapped -->
+          <input v-model="passcode" type="password" name="sf-move-passcode" autocomplete="new-password"
+            :readonly="passLocked" @focus="passLocked = false" :class="{ invalid: errors.passcode }" />
           <span v-if="errors.passcode" class="small bad">{{ errors.passcode }}</span>
         </label>
 
