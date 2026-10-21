@@ -156,8 +156,23 @@ function startDrag(e: DragEvent, job: unknown) {
   const p = data.value?.plan.find((x) => s(x.job) === s(job))
   log('drag start', { job: s(job), from: p ? `${s(p.day)} crew ${s(p.crew)}` : 'not planned' })
 }
+// While dragging: does the job fit in this lane next to Dan's other changes? (red outline if not)
+const dropOk = ref(true)
+function fitsLane(job: string, day: string, crew: string) {
+  const r = data.value?.ranked.find((x) => s(x.job) === job)
+  const days = Number(r?.days) || 1
+  const crews = Number(r?.techs) > 2 ? ['A', 'B'] : [crew]
+  const i = workDays.value.indexOf(day)
+  const n = Math.max(1, Math.ceil(days))
+  if (i < 0 || i + n > workDays.value.length) return false
+  return workDays.value.slice(i, i + n).every((d) =>
+    crews.every((c) => [...dansOtherJobs(d, c, job).values()].reduce((a, b) => a + b, 0) + jobLoad(days) <= 1 + 1e-9))
+}
 function overLane(day: string, crew: string) {
-  if (dropAt.value !== day + crew) log('drag over', { day, crew })
+  if (dropAt.value !== day + crew) {
+    dropOk.value = fitsLane(dragJob.value, day, crew)
+    log('drag over', { day, crew, fits: dropOk.value })
+  }
   dropAt.value = day + crew
 }
 function endDrag(e?: DragEvent) {
@@ -178,7 +193,8 @@ function dropOn(day: string, crew: string) {
   setFieldValue('day', day)
   if (editing.value.techs <= 2) setFieldValue('crew', crew)
   editing.value.dropped = true
-  validateField('day').then((r) => log('drop target check', r.valid ? 'OK' : r.errors))
+  // after the form reset has settled, so the reason shows in the panel straight away
+  nextTick(() => validateField('day').then((r) => log('drop target check', r.valid ? 'OK' : r.errors.join(' '))))
 }
 
 // ---- after a save the web API re-runs the planner (~1 min): watch for the new run, then show it ----
@@ -416,7 +432,8 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                 <span class="small muted reason">{{ p.reason }}</span>
                 <span v-if="s(p.source).startsWith('Dan')" class="tag">🔒 {{ p.source }}</span>
               </button>
-              <div v-for="cr in crews" :key="cr.id" class="lane" :class="[crewClass(cr.id), { drop: dropAt === c.iso + cr.id }]"
+              <div v-for="cr in crews" :key="cr.id" class="lane"
+                :class="[crewClass(cr.id), { drop: dropAt === c.iso + cr.id, nodrop: dropAt === c.iso + cr.id && !dropOk }]"
                 @dragover.prevent="overLane(c.iso, cr.id)" @dragleave="leaveLane" @drop.prevent="dropOn(c.iso, cr.id)">
                 <button v-for="p in laneJobs(c.iso, cr.id)" :key="s(p.job) + p.part" class="job" :class="crewClass(p.crew)" draggable="true"
                   @dragstart="startDrag($event, p.job)" @dragend="endDrag" @click="openEdit(p.job)">
@@ -471,7 +488,8 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
         <h2>{{ editing.title }}</h2>
         <p v-if="editing.current" class="small muted">Now: {{ dayLabel(s(editing.current.day)) }}, crew {{ editing.current.crew }}</p>
         <p v-else class="small muted">Not in the plan yet · {{ editing.techs }} techs × {{ editing.days }} day(s)</p>
-        <p v-if="editing.dropped" class="banner small">
+        <p v-if="editing.dropped && errors.day" class="banner bad small">Can't move it there: {{ errors.day }}</p>
+        <p v-else-if="editing.dropped" class="banner small">
           Move to <b>{{ dayLabel(day) }}</b>, <b>{{ crew === 'A+B' ? 'both crews' : 'Crew ' + crew }}</b>? Press <b>Save move</b> to confirm.
         </p>
 
@@ -582,6 +600,7 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .mtag { align-self: flex-start; max-width: 100%; font-size: 11px; line-height: 1.5; background: #f0d58a; color: #5c4300; border-radius: 4px; padding: 0 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lane { display: grid; gap: 4px; min-height: 30px; border-radius: 8px; }
 .lane.drop { outline: 2px dashed var(--c); outline-offset: 2px; background: #f3f8ff; }
+.lane.nodrop { outline-color: var(--bad); background: #fdecea; }
 .job[draggable='true'] { cursor: grab; }
 .ghost { margin: 0; border: 1px dashed var(--c); border-radius: 6px; padding: 4px 8px; color: var(--c); }
 .free { margin: 0; color: var(--muted); border: 1px dashed var(--line); border-radius: 6px; padding: 4px 8px; }
