@@ -106,7 +106,8 @@ const month = computed(() => {
       weekend: wd > 4,
       holiday: holidays.value.has(iso),
       school,
-      schoolStart: school && (wd === 0 || !isSchoolHoliday(addDays(iso, -1))), // label once per week row
+      // label once per week row, and on the 1st so a month that starts mid-holiday still says so
+      schoolStart: school && (wd === 0 || iso.endsWith('-01') || !isSchoolHoliday(addDays(iso, -1))),
       work: workDays.value.includes(iso),
     })
     iso = addDays(iso, 1)
@@ -494,6 +495,7 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .mcell:not(.plan) .dnum { color: var(--muted); font-weight: 400; }
 .mjob { display: block; width: 100%; text-align: left; font-size: 11px; padding: 1px 4px; border: 0; border-left: 3px solid var(--c); border-radius: 4px; background: #eef3fa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: grab; }
 .mjob b { color: var(--c); }
+.mjob .sub { margin-left: 4px; color: var(--muted); }
 .lane { display: grid; gap: 4px; min-height: 30px; border-radius: 8px; }
 .lane.drop { outline: 2px dashed var(--c); outline-offset: 2px; background: #f3f8ff; }
 .job[draggable='true'] { cursor: grab; }
