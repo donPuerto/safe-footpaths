@@ -200,7 +200,7 @@ function dropOn(day: string, crew: string) {
 }
 
 // ---- after a save the web API re-runs the planner (~1 min): watch for the new run, then show it ----
-// Fresh reads cost ~14 Google Sheets reads (quota 60/min), so check every 30 s, at most 6 times.
+// A fresh read is one Google Sheets call (batchGet), so checking every 10 s for up to 3 min is cheap.
 const replanning = ref(false)
 const justUpdated = ref(false)
 let runBefore = ''
@@ -213,10 +213,10 @@ function startReplanWatch() {
   log('re-plan started; waiting for a run newer than', runBefore)
   clearInterval(replanTimer)
   replanTimer = setInterval(() => {
-    if (++tries > 6) { clearInterval(replanTimer); replanning.value = false; log('re-plan not seen after 3 min – press Refresh'); return }
-    log(`re-plan check ${tries}/6`)
+    if (++tries > 18) { clearInterval(replanTimer); replanning.value = false; log('re-plan not seen after 3 min – press Refresh'); return }
+    log(`re-plan check ${tries}/18`)
     reloadFresh()
-  }, 30000)
+  }, 10000)
 }
 watch(lastRun, (r) => {
   if (replanning.value && s(r?.run_at) && s(r?.run_at) !== runBefore) {
@@ -322,7 +322,7 @@ async function save(action: 'lock' | 'move' | 'unlock') {
     log('save →', body)
     const res = await $fetch('/api/override', { method: 'POST', body: { ...body, passcode: passcode.value } })
     log('save ✓', res)
-    message.value = (action === 'unlock' ? 'Unlocked.' : 'Saved.') + ' Re-planning now – the calendar updates by itself in about a minute.'
+    message.value = (action === 'unlock' ? 'Unlocked.' : 'Saved.') + ' Updating the plan now – the calendar refreshes by itself in about 20 seconds.'
     reloadFresh()
     startReplanWatch()
   } catch (e: any) {
@@ -369,7 +369,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
       <p>Loading the plan from the Google Sheet… this takes a few seconds.</p>
     </div>
     <p v-if="replanning" class="banner replan">
-      <span class="spinner small-spin" /> Saved. Updating the plan with your change… the calendar refreshes by itself in about a minute.
+      <span class="spinner small-spin" /> Saved. Updating the plan with your change… the calendar refreshes by itself in about 20 seconds.
     </p>
     <p v-else-if="justUpdated" class="banner done">✓ Plan updated with your change.</p>
     <p v-else-if="pendingChanges.length" class="banner">
@@ -445,7 +445,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                   <span class="small muted reason">{{ p.reason }}</span>
                   <span v-if="s(p.source).startsWith('Dan')" class="tag">🔒 {{ p.source }}</span>
                 </button>
-                <p v-for="o in movingInto(c.iso, cr.id)" :key="s(o.job)" class="small ghost">↪ {{ s(o.job) }} will move here – updating the plan (about 1 min)</p>
+                <p v-for="o in movingInto(c.iso, cr.id)" :key="s(o.job)" class="small ghost">↪ {{ s(o.job) }} will move here – updating the plan (about 20 s)</p>
                 <p v-if="!laneJobs(c.iso, cr.id).length && !cell(c.iso, cr.id).length && !movingInto(c.iso, cr.id).length" class="small free">
                   Crew {{ cr.id }} free
                 </p>
@@ -495,7 +495,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
           Move to <b>{{ dayLabel(day) }}</b>, <b>{{ crew === 'A+B' ? 'both crews' : 'Crew ' + crew }}</b>? Press <b>Save move</b> to confirm.
         </p>
 
-        <p v-if="replanning" class="banner small">The plan is still updating with your last change (about a minute). Make the next change after that.</p>
+        <p v-if="replanning" class="banner small">The plan is still updating with your last change (about 20 seconds). Make the next change after that.</p>
         <button v-if="editing.current && !editing.dropped" type="button" :disabled="saving || replanning" @click="saveWithPasscode('lock')">🔒 Lock where it is</button>
 
         <label>Move to day
@@ -529,7 +529,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
           <button type="button" @click="closeEdit">Close</button>
         </div>
         <p v-if="message" class="small" :class="/Saved|Unlocked/.test(message) ? 'ok' : 'bad'">{{ message }}</p>
-        <p class="small muted">Changes go to the Overrides tab, and the plan is re-made straight away (about a minute).</p>
+        <p class="small muted">Changes go to the Overrides tab, and the plan updates straight away (about 20 seconds).</p>
       </form>
     </div>
   </div>
