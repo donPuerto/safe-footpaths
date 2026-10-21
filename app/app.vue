@@ -176,7 +176,9 @@ function overLane(day: string, crew: string) {
   dropAt.value = day + crew
 }
 function endDrag(e?: DragEvent) {
-  if (e) log('drag end', { job: dragJob.value || '(dropped)', dropEffect: e.dataTransfer?.dropEffect })
+  // dropOn() clears dragJob first, so a job still set here means the drop never happened
+  if (e && dragJob.value) log('drag end – NOT dropped: released outside a crew lane', { job: dragJob.value })
+  else if (e) log('drag end (dropped)')
   dragJob.value = ''
   dropAt.value = ''
 }
@@ -598,7 +600,9 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .swatch.school, .cell.school { background: #fff3cc; border-color: #f0d58a; }
 .swatch.off { background: repeating-linear-gradient(45deg, #f1f2f4, #f1f2f4 4px, #e2e5e9 4px, #e2e5e9 8px); }
 .mtag { align-self: flex-start; max-width: 100%; font-size: 11px; line-height: 1.5; background: #f0d58a; color: #5c4300; border-radius: 4px; padding: 0 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lane { display: grid; gap: 4px; min-height: 30px; border-radius: 8px; }
+/* Each crew lane stretches to fill the day, so the whole day is a drop target (top half A, bottom half B). */
+.lane { flex: 1 1 0; display: flex; flex-direction: column; gap: 4px; min-height: 48px; padding: 4px; border-radius: 8px;
+  background: color-mix(in srgb, var(--c) 5%, transparent); border-left: 3px solid color-mix(in srgb, var(--c) 35%, transparent); }
 .lane.drop { outline: 2px dashed var(--c); outline-offset: 2px; background: #f3f8ff; }
 .lane.nodrop { outline-color: var(--bad); background: #fdecea; }
 .job[draggable='true'] { cursor: grab; }
