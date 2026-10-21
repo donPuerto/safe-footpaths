@@ -369,7 +369,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
       <p>Loading the plan from the Google Sheet… this takes a few seconds.</p>
     </div>
     <p v-if="replanning" class="banner replan">
-      <span class="spinner small-spin" /> Re-planning with your change… the calendar updates by itself in about a minute.
+      <span class="spinner small-spin" /> Saved. Updating the plan with your change… the calendar refreshes by itself in about a minute.
     </p>
     <p v-else-if="justUpdated" class="banner done">✓ Plan updated with your change.</p>
     <p v-else-if="pendingChanges.length" class="banner">
@@ -445,7 +445,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                   <span class="small muted reason">{{ p.reason }}</span>
                   <span v-if="s(p.source).startsWith('Dan')" class="tag">🔒 {{ p.source }}</span>
                 </button>
-                <p v-for="o in movingInto(c.iso, cr.id)" :key="s(o.job)" class="small ghost">↪ {{ s(o.job) }} moving here (re-planning…)</p>
+                <p v-for="o in movingInto(c.iso, cr.id)" :key="s(o.job)" class="small ghost">↪ {{ s(o.job) }} will move here – updating the plan (about 1 min)</p>
                 <p v-if="!laneJobs(c.iso, cr.id).length && !cell(c.iso, cr.id).length && !movingInto(c.iso, cr.id).length" class="small free">
                   Crew {{ cr.id }} free
                 </p>
@@ -495,7 +495,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
           Move to <b>{{ dayLabel(day) }}</b>, <b>{{ crew === 'A+B' ? 'both crews' : 'Crew ' + crew }}</b>? Press <b>Save move</b> to confirm.
         </p>
 
-        <p v-if="replanning" class="banner small">Wait until the re-plan with your last change finishes (about a minute), then make the next change.</p>
+        <p v-if="replanning" class="banner small">The plan is still updating with your last change (about a minute). Make the next change after that.</p>
         <button v-if="editing.current && !editing.dropped" type="button" :disabled="saving || replanning" @click="saveWithPasscode('lock')">🔒 Lock where it is</button>
 
         <label>Move to day
