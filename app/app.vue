@@ -247,6 +247,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
           <span :class="s(lastRun.ok) === 'PASS' ? 'ok' : 'bad'">checks {{ lastRun.ok }}</span> ·
           {{ lastRun.placed }} of {{ lastRun.jobs }} jobs placed
         </p>
+        <p class="muted version">Page version {{ config.public.buildTime }}</p>
       </div>
       <div class="actions">
         <button @click="reloadFresh()" :disabled="pending">{{ pending ? 'Loading…' : 'Refresh' }}</button>
@@ -399,8 +400,10 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
         </label>
 
         <label>Passcode
-          <!-- Stop the browser's password manager refilling it: "new-password" + read-only until tapped -->
-          <input v-model="passcode" type="password" name="sf-move-passcode" autocomplete="new-password"
+          <!-- Not type="password": password managers only fill password fields, so Chrome can't refill it.
+               The dots come from CSS (-webkit-text-security). Read-only until tapped as a second guard. -->
+          <input v-model="passcode" type="text" class="secret" name="sf-move-code" autocomplete="off" autocapitalize="off"
+            spellcheck="false" inputmode="text" data-lpignore="true" data-1p-ignore data-bwignore
             :readonly="passLocked" @focus="passLocked = false" :class="{ invalid: errors.passcode }" />
           <span v-if="errors.passcode" class="small bad">{{ errors.passcode }}</span>
         </label>
@@ -494,6 +497,8 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 label { display: grid; gap: 4px; font-size: 13px; }
 select, input { padding: 8px; border: 1px solid var(--line); border-radius: 8px; }
 select.invalid, input.invalid { border-color: var(--bad); }
+input.secret { -webkit-text-security: disc; text-security: disc; }
+.version { font-size: 11px; margin: 0; }
 @media (max-width: 640px) {
   .page { padding: 12px; }
   h1 { font-size: 18px; }

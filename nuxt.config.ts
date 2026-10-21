@@ -16,6 +16,8 @@ export default defineNuxtConfig({
     appPasscode: process.env.APP_PASSCODE || '',
     public: {
       sheetUrl: process.env.NUXT_PUBLIC_SHEET_URL || '',
+      // shown on the page so we can tell whether a browser has the newest deploy
+      buildTime: new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
     },
   },
 })
