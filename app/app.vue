@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useForm } from 'vee-validate'
 import type { PlanData, PlanRow, OverrideRow } from '../shared/types'
 
 const config = useRuntimeConfig()
@@ -107,27 +108,58 @@ function dropOn(day: string, crew: string) {
   if (!job) return
   openEdit(job)
   if (!editing.value) return
-  form.day = day
-  if (editing.value.techs <= 2) form.crew = crew
+  setFieldValue('day', day)
+  if (editing.value.techs <= 2) setFieldValue('crew', crew)
   editing.value.dropped = true
 }
 
 // ---- Move / Lock panel ----
-const editing = ref<{ job: string; title: string; techs: number; current?: PlanRow; dropped?: boolean } | null>(null)
-const form = reactive({ crew: 'A', day: '' })
-const passcode = ref(import.meta.client ? localStorage.getItem('sf-passcode') || '' : '')
+const editing = ref<{ job: string; title: string; techs: number; days: number; current?: PlanRow; dropped?: boolean } | null>(null)
 const saving = ref(false)
 const message = ref('')
+
+// The same "can it physically go there?" checks the planner makes (engine.js planJobs), so Dan sees the
+// problem before saving instead of in "Needs a human" after the next run. A job of N days takes N work
+// days in a row (weekends and public holidays are skipped, like the planner does).
+const { defineField, errors, handleSubmit, validateField, resetForm, setFieldValue, setFieldError } = useForm({
+  validationSchema: {
+    day: (v: string) => {
+      const i = workDays.value.indexOf(v)
+      if (i < 0) return 'Pick a work day in the plan.'
+      const n = Math.max(1, Math.ceil(editing.value?.days || 1))
+      if (i + n > workDays.value.length)
+        return `This job takes ${n} work days, so it can't start on ${dayLabel(v)}: it would run past ${dayLabel(workDays.value.at(-1)!)}.`
+      return true
+    },
+    crew: (v: string) => {
+      if (!['A', 'B', 'A+B'].includes(v)) return 'Pick a crew.'
+      if ((editing.value?.techs ?? 2) > 2 && v !== 'A+B') return `Needs ${editing.value?.techs} technicians, so both crews.`
+      return true
+    },
+    passcode: (v: string) => (v?.trim() ? true : 'Type the passcode to save.'),
+  },
+  initialValues: { day: '', crew: 'A', passcode: '' },
+})
+const [day] = defineField('day')
+const [crew] = defineField('crew')
+const [passcode] = defineField('passcode')
+// An old version remembered the passcode on the device; forget it.
+onMounted(() => { try { localStorage.removeItem('sf-passcode') } catch {} })
 
 function openEdit(job: unknown) {
   const id = s(job)
   const r = data.value?.ranked.find((x) => s(x.job) === id)
   const current = data.value?.plan.find((p) => s(p.job) === id)
   const techs = Number(r?.techs ?? current?.techs ?? 2)
-  editing.value = { job: id, title: `${id} · ${org(r?.organisation || current?.organisation, id)}`, techs, current }
-  form.crew = techs > 2 ? 'A+B' : s(current?.crew) || 'A'
-  form.day = s(current?.day) || workDays.value[0] || ''
+  const days = Number(r?.days ?? current?.days ?? 1)
+  editing.value = { job: id, title: `${id} · ${org(r?.organisation || current?.organisation, id)}`, techs, days, current }
+  // Fresh form each time: passcode always starts empty.
+  resetForm({ values: { crew: techs > 2 ? 'A+B' : s(current?.crew) || 'A', day: s(current?.day) || workDays.value[0] || '', passcode: '' } })
   message.value = ''
+}
+function closeEdit() {
+  editing.value = null
+  resetForm({ values: { day: '', crew: 'A', passcode: '' } })
 }
 
 async function save(action: 'lock' | 'move' | 'unlock') {
@@ -138,17 +170,21 @@ async function save(action: 'lock' | 'move' | 'unlock') {
     const body =
       action === 'lock' && editing.value.current
         ? { job: editing.value.job, action, crew: s(editing.value.current.crew), day: s(editing.value.current.day) }
-        : { job: editing.value.job, action, crew: form.crew, day: form.day }
+        : { job: editing.value.job, action, crew: crew.value, day: day.value }
     await $fetch('/api/override', { method: 'POST', body: { ...body, passcode: passcode.value } })
-    localStorage.setItem('sf-passcode', passcode.value)
     message.value = action === 'unlock' ? 'Unlocked. The next run places it again.' : 'Saved. The next workflow run keeps it.'
     reloadFresh()
   } catch (e: any) {
-    message.value = e?.statusCode === 401 ? 'Wrong passcode.' : e?.statusMessage || e?.data?.statusMessage || 'Could not save.'
-    if (e?.statusCode === 401) localStorage.removeItem('sf-passcode')
+    if (e?.statusCode === 401) setFieldError('passcode', 'Wrong passcode.')
+    else message.value = e?.statusMessage || e?.data?.statusMessage || 'Could not save.'
   } finally {
     saving.value = false
   }
+}
+// Move checks every field; Lock and Unlock only need the passcode (they don't use the day/crew boxes).
+const submitMove = handleSubmit(() => save('move'))
+async function saveWithPasscode(action: 'lock' | 'unlock') {
+  if ((await validateField('passcode')).valid) await save(action)
 }
 </script>
 
@@ -264,39 +300,42 @@ async function save(action: 'lock' | 'move' | 'unlock') {
     </section>
 
     <!-- Move / Lock panel -->
-    <div v-if="editing" class="sheet" @click.self="editing = null">
-      <form class="panel" @submit.prevent="save('move')">
+    <div v-if="editing" class="sheet" @click.self="closeEdit">
+      <form class="panel" novalidate @submit.prevent="submitMove">
         <h2>{{ editing.title }}</h2>
         <p v-if="editing.current" class="small muted">Now: {{ dayLabel(s(editing.current.day)) }}, crew {{ editing.current.crew }}</p>
-        <p v-else class="small muted">Not in the plan yet.</p>
+        <p v-else class="small muted">Not in the plan yet · {{ editing.techs }} techs × {{ editing.days }} day(s)</p>
         <p v-if="editing.dropped" class="banner small">
-          Move to <b>{{ dayLabel(form.day) }}</b>, <b>{{ form.crew === 'A+B' ? 'both crews' : 'Crew ' + form.crew }}</b>? Press <b>Save move</b> to confirm.
+          Move to <b>{{ dayLabel(day) }}</b>, <b>{{ crew === 'A+B' ? 'both crews' : 'Crew ' + crew }}</b>? Press <b>Save move</b> to confirm.
         </p>
 
-        <button v-if="editing.current && !editing.dropped" type="button" :disabled="saving || !passcode" @click="save('lock')">🔒 Lock where it is</button>
+        <button v-if="editing.current && !editing.dropped" type="button" :disabled="saving" @click="saveWithPasscode('lock')">🔒 Lock where it is</button>
 
         <label>Move to day
-          <select v-model="form.day">
+          <select v-model="day" :class="{ invalid: errors.day }">
             <option v-for="d in workDays" :key="d" :value="d">{{ dayLabel(d) }}</option>
           </select>
+          <span v-if="errors.day" class="small bad">{{ errors.day }}</span>
         </label>
         <label>Crew
-          <select v-model="form.crew" :disabled="editing.techs > 2">
+          <select v-model="crew" :disabled="editing.techs > 2" :class="{ invalid: errors.crew }">
             <option value="A">Crew A</option>
             <option value="B">Crew B</option>
             <option value="A+B">Both crews</option>
           </select>
+          <span v-if="errors.crew" class="small bad">{{ errors.crew }}</span>
+          <span v-else-if="editing.techs > 2" class="small muted">Needs {{ editing.techs }} technicians, so both crews.</span>
         </label>
-        <p v-if="editing.techs > 2" class="small muted">Needs {{ editing.techs }} technicians, so both crews.</p>
 
         <label>Passcode
-          <input v-model="passcode" type="password" autocomplete="current-password" required />
+          <input v-model="passcode" type="password" autocomplete="off" :class="{ invalid: errors.passcode }" />
+          <span v-if="errors.passcode" class="small bad">{{ errors.passcode }}</span>
         </label>
 
         <div class="actions">
-          <button type="submit" class="primary" :disabled="saving || !passcode">Save move</button>
-          <button v-if="lockedNow(editing.job)" type="button" :disabled="saving || !passcode" @click="save('unlock')">Unlock</button>
-          <button type="button" @click="editing = null">Close</button>
+          <button type="submit" class="primary" :disabled="saving">Save move</button>
+          <button v-if="lockedNow(editing.job)" type="button" :disabled="saving" @click="saveWithPasscode('unlock')">Unlock</button>
+          <button type="button" @click="closeEdit">Close</button>
         </div>
         <p v-if="message" class="small" :class="/Saved|Unlocked/.test(message) ? 'ok' : 'bad'">{{ message }}</p>
         <p class="small muted">Changes go to the Overrides tab. The plan updates when the workflow runs again.</p>
@@ -363,6 +402,7 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .panel { background: var(--card); width: 100%; max-width: 480px; border-radius: 14px 14px 0 0; padding: 16px; display: grid; gap: 10px; max-height: 90vh; overflow: auto; }
 label { display: grid; gap: 4px; font-size: 13px; }
 select, input { padding: 8px; border: 1px solid var(--line); border-radius: 8px; }
+select.invalid, input.invalid { border-color: var(--bad); }
 @media (max-width: 640px) {
   .page { padding: 12px; }
   h1 { font-size: 18px; }
