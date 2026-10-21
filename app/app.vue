@@ -128,7 +128,7 @@ const { defineField, errors, handleSubmit, validateField, resetForm, setFieldVal
       if (i < 0) return 'Pick a work day in the plan.'
       const n = Math.max(1, Math.ceil(editing.value?.days || 1))
       if (i + n > workDays.value.length)
-        return `This job takes ${n} work days, so it can't start on ${dayLabel(v)}: it would run past ${dayLabel(workDays.value.at(-1)!)}.`
+        return `This job takes ${n} work days, so it can't start on ${dayLabel(v)}: the plan ends on ${dayLabel(workDays.value.at(-1)!)}.`
       return true
     },
     crew: (v: string) => {
