@@ -56,6 +56,49 @@ const addDays = (iso: string, n: number) => {
   return d.toISOString().slice(0, 10)
 }
 
+// ---- "Upcoming holidays" dropdown: public holidays + school breaks from Settings, from today on ----
+const holidayName = (iso: string) => {
+  const md = iso.slice(5)
+  const d = new Date(iso + 'T00:00:00Z')
+  if (md === '12-25') return 'Christmas Day'
+  if (md === '12-26' || (md === '12-28' && d.getUTCDay() === 1)) return 'Boxing Day'
+  if (md === '01-01') return "New Year's Day"
+  if (md === '01-26') return 'Australia Day'
+  if (d.getUTCMonth() === 10 && d.getUTCDay() === 2 && d.getUTCDate() <= 7) return 'Melbourne Cup Day'
+  return 'Public holiday'
+}
+// VIC school breaks by the month they start in
+const schoolBreakName = (start: string) => {
+  const m = Number(start.slice(5, 7))
+  if (m === 12 || m === 1) return 'Summer school holidays (end of Term 4)'
+  if (m === 3 || m === 4) return 'Term 1 school holidays (Easter)'
+  if (m === 6 || m === 7) return 'Term 2 school holidays (winter)'
+  if (m === 9 || m === 10) return 'Term 3 school holidays (spring)'
+  return 'VIC school holidays'
+}
+const daysBetween =(a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000)
+const upcoming = computed(() => {
+  const today = settings.value.today || new Date().toISOString().slice(0, 10)
+  const short = (iso: string) => fmt(iso, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+  const items = [
+    ...schoolHols.value.map(([a, b]) => ({ kind: 'school', start: a!, end: b!, name: schoolBreakName(a!), when: `${short(a!)} – ${short(b!)}` })),
+    ...[...holidays.value].map((d) => ({ kind: 'public', start: d, end: d, name: holidayName(d), when: short(d) })),
+  ]
+  return items
+    .filter((h) => h.end >= today)
+    .sort((x, y) => x.start.localeCompare(y.start))
+    .map((h) => {
+      const n = daysBetween(today, h.start)
+      return { ...h, soon: n <= 0 ? 'now' : n === 1 ? 'tomorrow' : `in ${n} days`, inPlan: workDays.value.length > 0 && h.start <= workDays.value.at(-1)! && h.end >= workDays.value[0]! }
+    })
+})
+const holidayMenu = ref<HTMLDetailsElement | null>(null)
+function showHoliday(start: string) {
+  view.value = 'month'
+  monthKey.value = start.slice(0, 7)
+  if (holidayMenu.value) holidayMenu.value.open = false
+}
+
 // Week (the 2-week plan, Mon–Fri) or Month (whole month incl. weekends, to see holidays around the plan).
 const view = ref<'week' | 'month'>('week')
 onMounted(() => {
@@ -276,13 +319,33 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
         <button :class="{ on: tab === 'ranked' }" @click="tab = 'ranked'">Ranked <b>{{ data.ranked.length }}</b></button>
         <button :class="{ on: tab === 'human' }" @click="tab = 'human'">Needs a human <b>{{ data.needsHuman.length }}</b></button>
       </div>
-      <div v-if="tab === 'plan'" class="tabs crewpick" aria-label="Calendar view and crew">
+      <div v-if="tab === 'plan'" class="navrow">
+      <div class="tabs crewpick" aria-label="Calendar view and crew">
         <button :class="{ on: view === 'week' }" @click="view = 'week'">Week</button>
         <button :class="{ on: view === 'month' }" @click="view = 'month'">Month</button>
         <span class="sep" />
         <button :class="{ on: crewFilter === 'all' }" @click="crewFilter = 'all'">Both crews</button>
         <button :class="{ on: crewFilter === 'A' }" @click="crewFilter = 'A'">Crew A</button>
         <button :class="{ on: crewFilter === 'B' }" @click="crewFilter = 'B'">Crew B</button>
+      </div>
+      <!-- Upcoming VIC public holidays and school breaks (from Settings); click one to see it in Month view -->
+      <details ref="holidayMenu" class="holmenu">
+        <summary>Upcoming holidays <b>{{ upcoming.length }}</b></summary>
+        <ul>
+          <li v-if="!upcoming.length" class="small muted">None listed in the Settings tab.</li>
+          <li v-for="h in upcoming" :key="h.kind + h.start">
+            <button type="button" @click="showHoliday(h.start)">
+              <i class="swatch" :class="h.kind === 'school' ? 'school' : 'off'" />
+              <span class="grow">
+                <strong>{{ h.name }}</strong>
+                <span class="small muted">{{ h.when }}</span>
+              </span>
+              <span class="when" :class="{ inplan: h.inPlan }">{{ h.inPlan ? 'in this plan' : h.soon }}</span>
+            </button>
+          </li>
+          <li class="small muted hint">Dates come from the Settings tab (public_holidays, school_holidays).</li>
+        </ul>
+      </details>
       </div>
     </nav>
 
@@ -475,6 +538,20 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .cell.out { opacity: 0.55; }
 .job { display: block; width: 100%; text-align: left; background: #f9fbff; padding: 6px 8px; border-left: 4px solid var(--c, var(--line)); }
 .job .reason { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.navrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.navrow .crewpick { min-width: 0; }
+.holmenu { position: relative; flex: 0 0 auto; }
+.holmenu summary { list-style: none; cursor: pointer; white-space: nowrap; font-size: 13px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--bad); color: var(--bad); background: #fff5f4; }
+.holmenu summary::-webkit-details-marker { display: none; }
+.holmenu summary::after { content: ' ▾'; }
+.holmenu[open] summary { background: var(--bad); color: #fff; }
+.holmenu summary b { margin-left: 2px; }
+.holmenu ul { position: absolute; right: 0; top: calc(100% + 6px); z-index: 10; width: min(340px, calc(100vw - 32px)); margin: 0; padding: 6px; list-style: none; background: var(--card); border: 1px solid var(--line); border-top: 3px solid var(--bad); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); display: grid; gap: 2px; }
+.holmenu li button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 0; border-radius: 8px; padding: 8px; }
+.holmenu li button:hover { background: #f6f7f9; }
+.holmenu .when { font-size: 12px; color: var(--bad); white-space: nowrap; }
+.holmenu .when.inplan { font-weight: 600; }
+.holmenu .hint { padding: 6px 8px 2px; }
 .crewpick .sep { flex: 0 0 1px; background: var(--line); margin: 2px 4px; }
 .swatch { display: inline-block; width: 14px; height: 10px; border-radius: 3px; vertical-align: middle; border: 1px solid var(--line); }
 .swatch.school, .cell.school, .mgrid .mcell.school { background: #fff3cc; border-color: #f0d58a; }
