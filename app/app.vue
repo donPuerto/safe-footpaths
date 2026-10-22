@@ -397,7 +397,7 @@ function whyNotLane(job: string, day: string, crew: string) {
     for (const c of crews) {
       const others = dansOtherJobs(d, c, job)
       if ([...others.values()].reduce((a, b) => a + b, 0) + jobLoad(days) > 1 + 1e-9)
-        return `${job} needs ${n} day${n === 1 ? '' : 's'} (${workDays.value.slice(i, i + n).map(dayLabel).join(' + ')}), but crew ${c} is already full on ${dayLabel(d)} with your change ${[...others.keys()].join(', ')}. Unlock ${[...others.keys()][0]} or pick another day.`
+        return `${job} needs ${n} day${n === 1 ? '' : 's'} (${workDays.value.slice(i, i + n).map(dayLabel).join(' + ')}), but crew ${c} is full on ${dayLabel(d)} with ${[...others.keys()].join(', ')}. Move ${[...others.keys()][0]} first or pick another day.`
     }
   return ''
 }
@@ -513,19 +513,15 @@ const message = ref('')
 // The same "can it physically go there?" checks the planner makes (engine.js planJobs), so Dan sees the
 // problem before saving instead of in "Needs a human" after the next run. A job of N days takes N work
 // days in a row (weekends and public holidays are skipped, like the planner does).
-// Dan's changes are placed first and the planner works around them, so a crew-day only has room
-// for what Dan's OTHER changes leave free (planned "Dan" rows + saved moves not run yet).
+// A crew-day has room for what the jobs shown in it leave free – every job counts (the lane label says the same),
+// so "full" on the page means "can't drop here". (The planner itself would move its own placements around a
+// Dan change, but that was confusing: a lane read "full" and still accepted a drop.)
 const jobLoad = (days: number) => (days >= 1 ? 1 : days)
 function dansOtherJobs(day: string, crew: string, exceptJob: string) {
   const out = new Map<string, number>()
-  for (const p of data.value?.plan ?? [])
-    if (s(p.day) === day && s(p.crew).split('+').includes(crew) && s(p.source).startsWith('Dan') && s(p.job) !== exceptJob)
+  for (const p of displayPlan.value)
+    if (s(p.day) === day && s(p.crew).split('+').includes(crew) && s(p.job) !== exceptJob)
       out.set(s(p.job), jobLoad(Number(p.days) || 1))
-  for (const o of pendingChanges.value)
-    if (s(o.action) === 'move' && s(o.day) === day && s(o.crew).split('+').includes(crew) && s(o.job) !== exceptJob) {
-      const r = data.value?.ranked.find((x) => s(x.job) === s(o.job))
-      out.set(s(o.job), jobLoad(Number(o.days) || Number(r?.days) || 1))
-    }
   return out
 }
 
@@ -546,7 +542,7 @@ const { defineField, errors, handleSubmit, validateField, resetForm, setFieldVal
           const used = [...others.values()].reduce((a, b) => a + b, 0)
           if (used + need > 1 + 1e-9) {
             const list = [...others].map(([j, l]) => `${j} (${l === 1 ? '1 day' : l + ' day'})`).join(', ')
-            return `Crew ${c} is already full on ${dayLabel(d)} with your change ${list}. Pick another day or crew, or unlock ${[...others.keys()][0]} first.`
+            return `Crew ${c} is full on ${dayLabel(d)} with ${list}. Pick another day or crew, or move ${[...others.keys()][0]} first.`
           }
         }
       return true
