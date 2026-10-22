@@ -207,10 +207,13 @@ function startResize(e: PointerEvent, p: CalRow, startDay: string) {
   e.preventDefault()
   e.stopPropagation()
   resizing.value = { job: s(p.job), day: startDay, crew: s(p.crew), days: Math.max(1, Math.ceil(Number(p.days) || 1)) }
-  // listen on the window, not the handle: the card may be re-rendered (strip <-> lane) while it is being resized
+  // Capture the pointer on the page body (it survives the card being re-rendered strip <-> lane) so the release
+  // reaches us wherever it happens - over the bar, over another day, or outside the window.
+  try { document.body.setPointerCapture(e.pointerId) } catch {}
   window.addEventListener('pointermove', moveResize)
   window.addEventListener('pointerup', endResize, { once: true })
   window.addEventListener('pointercancel', endResize, { once: true })
+  window.addEventListener('blur', endResize, { once: true })
   log('resize start', { job: s(p.job), from: `${resizing.value.days} day(s)` })
 }
 function moveResize(e: PointerEvent) {
@@ -228,15 +231,17 @@ function moveResize(e: PointerEvent) {
     log('resize', { days: n })
   }
 }
-function endResize() {
+function endResize(e?: Event) {
   window.removeEventListener('pointermove', moveResize)
   window.removeEventListener('pointerup', endResize)
   window.removeEventListener('pointercancel', endResize)
+  window.removeEventListener('blur', endResize)
   const r = resizing.value
   if (!r) return
   resizing.value = null
   dragEndedAt = Date.now()
-  log('resize end', { job: r.job, days: r.days })
+  log('resize end', { job: r.job, days: r.days, via: e?.type || 'direct' })
+  setTimeout(() => { rebuildLanes(); calKey.value++ }, 0) // redraw from data: no half-updated bars left behind
   openEdit(r.job)
   if (!editing.value) return
   setFieldValue('day', r.day)
