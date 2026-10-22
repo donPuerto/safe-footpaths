@@ -349,6 +349,12 @@ function onDragEnd(e: DraggableEvent<CalRow>) {
 // and the lane turns red with the reason, so a refused drop never looks like a broken page.
 const blocked = ref<{ lane: string; reason: string } | null>(null)
 const hoverLane = ref('') // the lane under the pointer while dragging (filled in its crew colour)
+const toast = useToast()
+// the refusal message is one toast (id "drop"): sticky while the card is held, 8 s after it was put back
+watch([blocked, dragJob], ([b, dj]) => {
+  if (!b) { toast.dismiss('drop'); return }
+  toast.error(`${dj ? "Can't drop here" : 'Put back where it was'}: ${b.reason}`, { id: 'drop', timeout: dj ? 0 : 8000 })
+})
 function canMove(e: MoveEvent) {
   if ((e.to as HTMLElement).dataset.strip) return false // the long-bar strip only gives cards, never takes them
   const key = (e.to as HTMLElement).dataset.lane || ''
@@ -475,6 +481,7 @@ watch(lastRun, (r) => {
     replanning.value = false
     if (queued.value) { runQueued(); return } // changes came in during that run: one more, for all of them
     justUpdated.value = true
+    toast.success('Plan updated with your changes.', { id: 'updated', timeout: 6000 })
     setTimeout(() => { justUpdated.value = false }, 8000)
   }
 })
@@ -701,10 +708,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
     </nav>
 
     <!-- why a lane refused the card (shown while dragging over it, and a moment after letting go) -->
-    <p v-if="blocked" class="droptoast" role="status">
-      <span>⛔ {{ dragJob ? "Can't drop here" : 'Put back where it was' }}: {{ blocked.reason }}</span>
-      <button type="button" class="toastclose" aria-label="Close" @click="blocked = null">✕</button>
-    </p>
+    <AppToast />
 
     <!-- Calendar: weeks as rows, Mon–Fri as columns (on a phone, swipe sideways through the days) -->
     <section v-if="tab === 'plan' && data" :key="calKey" class="cal" :class="{ dragging: dragJob }">
@@ -958,11 +962,6 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .lane.ready.over .free { font-weight: 600; }
 .lane.cant { opacity: 0.45; }
 .lane.nodrop { outline: 2px dashed var(--bad); outline-offset: 2px; background: #fdecea; opacity: 1; }
-.droptoast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 30; margin: 0; max-width: min(560px, calc(100vw - 32px));
-  background: var(--bad); color: #fff; padding: 10px 12px 10px 14px; border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); font-size: 14px;
-  display: flex; align-items: flex-start; gap: 10px; }
-.toastclose { flex: 0 0 auto; background: transparent; border: 1px solid rgba(255, 255, 255, 0.6); color: #fff; border-radius: 6px; padding: 0 7px; line-height: 1.5; cursor: pointer; }
-.toastclose:hover { background: rgba(255, 255, 255, 0.15); }
 .lane .job { cursor: grab; touch-action: none; }
 /* resize handle on the right edge of every card and bar (FullCalendar style); two thin lines show on hover */
 .job { position: relative; }
