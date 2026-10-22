@@ -704,7 +704,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
     <p v-if="blocked" class="droptoast" role="status">⛔ {{ dragJob ? "Can't drop here" : 'Put back where it was' }}: {{ blocked.reason }}</p>
 
     <!-- Calendar: weeks as rows, Mon–Fri as columns (on a phone, swipe sideways through the days) -->
-    <section v-if="tab === 'plan' && data" :key="calKey" class="cal">
+    <section v-if="tab === 'plan' && data" :key="calKey" class="cal" :class="{ dragging: dragJob }">
       <p class="legend small">
         <span v-for="c in allCrews" :key="c.id" :class="crewClass(c.id)"><i class="chip">Crew {{ c.id }}</i> {{ c.name }}</span>
         <span class="crew-AB"><i class="chip">Both</i> 4-person job</span>
@@ -946,7 +946,10 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .lane.both { flex: 0 0 auto; min-height: 0; }
 /* while a card is dragged: lanes that can take it get a thin dashed outline in THEIR crew colour (blue = it would
    go to Crew A, green = Crew B); the lane under the pointer fills; lanes that can't take it fade */
-.lane.ready { outline: 1.5px dashed color-mix(in srgb, var(--c) 55%, transparent); outline-offset: 2px; min-height: 44px; }
+.lane.ready { outline: 1.5px dashed color-mix(in srgb, var(--c) 55%, transparent); outline-offset: 2px; min-height: 44px;
+  flex: 1 1 auto; } /* a lane that can take the card fills the free space of its day: a drop "a bit low" still lands in it */
+.cal.dragging .cell { min-height: 120px; }
+.lane.cant { min-height: 10px; }
 .lane.ready .free { border-color: var(--c); color: var(--c); }
 .lane.ready.over { outline: 2px dashed var(--c); background: color-mix(in srgb, var(--c) 9%, #fff); }
 .lane.ready.over .free { font-weight: 600; }
