@@ -293,7 +293,8 @@ function onDragStart(e: DraggableEvent<CalRow>) {
 function onDragEnd(e: DraggableEvent<CalRow>) {
   log(e.from === e.to ? 'drag end – put back where it was' : 'drag end (dropped)', blocked.value?.reason || '')
   dragJob.value = ''
-  setTimeout(() => { blocked.value = null }, 2500) // leave the reason up a moment after letting go
+  // a refused drop snaps the card back; keep the reason on screen long enough to read it
+  if (blocked.value) { const b = blocked.value; setTimeout(() => { if (blocked.value === b) blocked.value = null }, 8000) }
 }
 // SortableJS asks before showing the card in a lane: a lane it can't fit in refuses it (the card stays put),
 // and the lane turns red with the reason, so a refused drop never looks like a broken page.
@@ -330,7 +331,7 @@ function whyNotLane(job: string, day: string, crew: string) {
     for (const c of crews) {
       const others = dansOtherJobs(d, c, job)
       if ([...others.values()].reduce((a, b) => a + b, 0) + jobLoad(days) > 1 + 1e-9)
-        return `Crew ${c} is already full on ${dayLabel(d)} with your change ${[...others.keys()].join(', ')}.`
+        return `${job} needs ${n} day${n === 1 ? '' : 's'} (${workDays.value.slice(i, i + n).map(dayLabel).join(' + ')}), but crew ${c} is already full on ${dayLabel(d)} with your change ${[...others.keys()].join(', ')}. Unlock ${[...others.keys()][0]} or pick another day.`
     }
   return ''
 }
@@ -619,7 +620,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
     </nav>
 
     <!-- why a lane refused the card (shown while dragging over it, and a moment after letting go) -->
-    <p v-if="blocked" class="droptoast" role="status">⛔ Can't drop here: {{ blocked.reason }}</p>
+    <p v-if="blocked" class="droptoast" role="status">⛔ {{ dragJob ? "Can't drop here" : 'Put back where it was' }}: {{ blocked.reason }}</p>
 
     <!-- Calendar: weeks as rows, Mon–Fri as columns (on a phone, swipe sideways through the days) -->
     <section v-if="tab === 'plan' && data" class="cal">
