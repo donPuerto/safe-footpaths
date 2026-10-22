@@ -751,10 +751,14 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .crew-AB { --c: #7a3fb0; }
 .chip { display: inline-block; font-style: normal; font-size: 11px; font-weight: 600; color: #fff; background: var(--c, var(--muted)); border-radius: 4px; padding: 0 5px; margin-right: 4px; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0; }
-.cal { display: grid; gap: 18px; }
-.week h2 { margin-bottom: 6px; }
-.weekgrid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
-.cell { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px; min-height: 130px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.cal { display: grid; gap: 12px; }
+.week h2 { margin-bottom: 4px; font-size: 15px; }
+.weekgrid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; align-items: start; } /* each day only as tall as its jobs */
+.cell { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 5px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+/* denser cards inside the days */
+.cell .job { padding: 5px 7px; font-size: 13px; line-height: 1.35; margin: 0; }
+.cell .job strong { font-size: 14px; }
+.cell .job .reason { -webkit-line-clamp: 1; }
 .cell h3 { font-size: 13px; margin: 0 0 2px; }
 .cell.off { background: repeating-linear-gradient(45deg, #f1f2f4, #f1f2f4 6px, #e7e9ec 6px, #e7e9ec 12px); }
 .cell.out { opacity: 0.55; }
@@ -779,7 +783,7 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .swatch.off { background: repeating-linear-gradient(45deg, #f1f2f4, #f1f2f4 4px, #e2e5e9 4px, #e2e5e9 8px); }
 .mtag { align-self: flex-start; max-width: 100%; font-size: 11px; line-height: 1.5; background: #f0d58a; color: #5c4300; border-radius: 4px; padding: 0 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Each crew lane stretches to fill the day, so the whole day is a drop target (top half A, bottom half B). */
-.lane { flex: 1 0 auto; display: flex; flex-direction: column; gap: 4px; min-height: 48px; padding: 4px; border-radius: 8px;
+.lane { flex: 0 0 auto; display: flex; flex-direction: column; gap: 3px; min-height: 40px; padding: 3px; border-radius: 8px;
   background: color-mix(in srgb, var(--c) 5%, transparent); border-left: 3px solid color-mix(in srgb, var(--c) 35%, transparent); }
 .lane.both { flex: 0 0 auto; min-height: 0; }
 .lane.nodrop { outline: 2px dashed var(--bad); outline-offset: 2px; background: #fdecea; }
@@ -793,10 +797,12 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 @media (min-width: 901px) { .cell > h3 { display: none; } }
 @media (max-width: 900px) { .dayhead { display: none; } }
 /* multi-day on wide screens: a strip row per crew under the headings; each bar spans its columns (subgrid) */
-.strip { grid-column: 1 / span 5; display: grid; grid-template-columns: subgrid; align-items: stretch; min-height: 0; }
-.job.span { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; padding: 8px 12px; border-left: 4px solid var(--c);
-  background: color-mix(in srgb, var(--c) 10%, #fff); }
-.job.span .small { display: inline; }
+.strip { grid-column: 1 / span 5; display: grid; grid-template-columns: subgrid; align-items: start; min-height: 0; margin-bottom: -4px; }
+/* one slim line per bar: chip, job, name, dates – anything that doesn't fit is cut with … */
+.job.span { margin: 0; display: block; padding: 4px 10px; font-size: 13px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border-left: 4px solid var(--c); background: color-mix(in srgb, var(--c) 10%, #fff); }
+.job.span > * { display: inline; margin-right: 6px; }
+.job.span .small { display: inline; color: var(--muted); }
 .job.span.cont-left { border-left-style: dashed; border-top-left-radius: 0; border-bottom-left-radius: 0; }
 .job.span.cont-right { border-right: 4px dashed var(--c); border-top-right-radius: 0; border-bottom-right-radius: 0; }
 .contmark { font-size: 12px; font-weight: 600; color: var(--c); }
@@ -813,7 +819,7 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .unsaved-tag { background: #fff3cc; color: #5c4300; }
 .saved-tag { background: #e9f6ec; color: var(--ok); }
 @keyframes pop { from { transform: scale(0.94); opacity: 0.3; } to { transform: none; opacity: 1; } }
-.free { margin: 0; color: var(--muted); border: 1px dashed var(--line); border-radius: 6px; padding: 4px 8px; }
+.free { margin: 0; color: var(--muted); border: 1px dashed var(--line); border-radius: 6px; padding: 3px 8px; font-size: 12px; }
 .tag { display: inline-block; font-size: 12px; background: #eef2f7; border-radius: 6px; padding: 1px 6px; }
 .list { display: grid; gap: 8px; }
 .row { display: flex; gap: 12px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
