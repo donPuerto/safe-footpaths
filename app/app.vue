@@ -12,6 +12,8 @@ const { data, pending, error } = useFetch<PlanData>('/api/plan', {
   query: computed(() => (fresh.value ? { fresh: fresh.value } : {})),
 })
 const reloadFresh = () => { fresh.value = Date.now() }
+// The Refresh button: start over completely (reload = newest deployed build, fresh data, no leftover client state).
+const hardRefresh = () => { window.location.reload() }
 
 // Console trace of the whole flow (load → drag → drop → panel → checks → save → re-plan).
 // Open DevTools → Console and filter on "[sf]". Never logs the passcode.
@@ -651,7 +653,10 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
         <p class="muted version">Page version {{ config.public.buildTime }}</p>
       </div>
       <div class="actions">
-        <button @click="reloadFresh()" :disabled="pending">{{ pending ? 'Loading…' : 'Refresh' }}</button>
+        <!-- a full reload: newest build, fresh data, every unsaved preview / open panel / timer gone -->
+        <button title="Reload the page from scratch (latest version + fresh data; unsaved changes are discarded)" @click="hardRefresh()">
+          {{ pending ? 'Loading…' : 'Refresh' }}
+        </button>
         <a v-if="config.public.sheetUrl" :href="config.public.sheetUrl" target="_blank" rel="noopener">Open Google Sheet</a>
       </div>
     </header>
