@@ -208,6 +208,7 @@ function endResize() {
   const r = resizing.value
   if (!r) return
   resizing.value = null
+  dragEndedAt = Date.now()
   openEdit(r.job)
   if (!editing.value) return
   setFieldValue('day', r.day)
@@ -290,7 +291,15 @@ function onDragStart(e: DraggableEvent<CalRow>) {
   lastOver = ''
   log('drag start', { job: dragJob.value, from: `${s(e.data?.day)} crew ${s(e.data?.crew)}` })
 }
+// The browser fires a click on the card right after a drag or resize ends; that must not re-open the panel
+// (it would wipe the drop/resize prefill). Clicks within 600 ms of a drag end are ignored.
+let dragEndedAt = 0
+function onCardClick(job: unknown) {
+  if (Date.now() - dragEndedAt < 600) { log('click ignored (just dragged)'); return }
+  openEdit(job)
+}
 function onDragEnd(e: DraggableEvent<CalRow>) {
+  dragEndedAt = Date.now()
   log(e.from === e.to ? 'drag end – put back where it was' : 'drag end (dropped)', blocked.value?.reason || '')
   dragJob.value = ''
   // a refused drop snaps the card back; keep the reason on screen long enough to read it
@@ -352,8 +361,9 @@ function onDrop(e: DraggableEvent<CalRow>, day: string, crew: string) {
   setFieldValue('day', day)
   if (editing.value.techs <= 2) setFieldValue('crew', crew)
   editing.value.dropped = true
-  // after the form reset has settled, so the reason shows in the panel straight away
-  nextTick(() => validateField('day').then((r) => log('drop target check', r.valid ? 'OK' : r.errors.join(' '))))
+  // after the form reset has settled, so the reason shows in the panel straight away; then put every card back
+  // where the data says (SortableJS moved the DOM node, the preview now carries the move)
+  nextTick(() => { rebuildLanes(); validateField('day').then((r) => log('drop target check', r.valid ? 'OK' : r.errors.join(' '))) })
 }
 
 // ---- after a save the web API re-runs the planner (~20 s): watch for the new run, then show it ----
@@ -641,7 +651,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
             data-strip="1" class="strip" @start="onDragStart" @end="onDragEnd">
             <button v-for="g in strips[sk]" :key="s(g.job) + g.col" type="button" class="job span"
               :class="[crewClass(g.crew), { incoming: g.moving, 'cont-left': !g.first, 'cont-right': !g.last }]"
-              :style="{ gridColumn: `${g.col + 1} / span ${g.span}` }" :data-job="s(g.job)" @click="openEdit(g.job)">
+              :style="{ gridColumn: `${g.col + 1} / span ${g.span}` }" :data-job="s(g.job)" @click="onCardClick(g.job)">
               <span v-if="!g.first" class="contmark">← continued</span>
               <i class="chip">{{ s(g.crew) === 'A+B' ? 'Both' : 'Crew ' + s(g.crew) }}</i>
               <strong>{{ s(g.job) }}</strong> <span>{{ org(g.organisation, g.job) }}</span>
@@ -668,11 +678,11 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                 <template v-for="p in lanes[laneKey(c.iso, ln.id)]" :key="s(p.job) + p.part">
                 <!-- day 2+ of a multi-day job: a slim bar joined to the first-day card -->
                 <button v-if="isContinued(p)" type="button" class="job cont" :class="[crewClass(p.crew), { incoming: p.moving }]"
-                  :data-job="s(p.job)" @click="openEdit(p.job)">
+                  :data-job="s(p.job)" @click="onCardClick(p.job)">
                   ↳ <strong>{{ s(p.job) }}</strong> continued from {{ startDayOf(p) }} <span class="muted">({{ p.part }})</span>
                 </button>
                 <button v-else type="button" class="job"
-                  :class="[crewClass(p.crew), { incoming: p.moving, multi: spanLabel(p) }]" :data-job="s(p.job)" @click="openEdit(p.job)">
+                  :class="[crewClass(p.crew), { incoming: p.moving, multi: spanLabel(p) }]" :data-job="s(p.job)" @click="onCardClick(p.job)">
                   <i class="chip">{{ s(p.crew) === 'A+B' ? 'Both' : 'Crew ' + s(p.crew) }}</i>
                   <strong>{{ s(p.job) }}</strong> {{ org(p.organisation, p.job) }}
                   <span class="small">{{ p.suburb }} · {{ spanLabel(p) || s(p.days) + 'd' }}</span>
