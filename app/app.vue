@@ -630,7 +630,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                 <p v-if="ln.id !== 'A+B' && !cell(c.iso, ln.id).length" class="small free">Crew {{ ln.id }} free</p>
                 <!-- the day is taken by a long bar above (wide screens): say so instead of showing an empty box -->
                 <p v-else-if="ln.id !== 'A+B' && !lanes[laneKey(c.iso, ln.id)]?.length" class="small free">
-                  ↑ {{ cell(c.iso, ln.id).map((p) => s(p.job)).join(', ') }} (see bar above)
+                  Crew {{ ln.id }} busy: {{ cell(c.iso, ln.id).map((p) => s(p.job)).join(', ') }} ↑ (the long bar above)
                 </p>
               </VueDraggable>
             </template>
