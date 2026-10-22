@@ -401,6 +401,31 @@ async function runQueued() {
     queued.value = n // keep them; the banner says to press Refresh / save again
   }
 }
+// "Update the plan now" in the pending banner: uses the passcode from this tab's last save, else asks for it.
+const needPass = ref(false)
+const passNow = ref('')
+const updating = ref(false)
+const updateError = ref('')
+async function updateNow() {
+  const code = sessionPasscode || passNow.value.trim()
+  if (!code) { needPass.value = true; return }
+  updating.value = true
+  updateError.value = ''
+  try {
+    await $fetch('/api/override', { method: 'POST', body: { action: 'replan', passcode: code } })
+    sessionPasscode = code
+    passNow.value = ''
+    needPass.value = false
+    log('update started from the banner')
+    startReplanWatch()
+  } catch (e: any) {
+    updateError.value = e?.statusCode === 401 ? 'Wrong passcode.' : 'Could not start the update.'
+    needPass.value = true
+    log('banner update failed', e?.statusCode)
+  } finally {
+    updating.value = false
+  }
+}
 function startReplanWatch() {
   runBefore = s(lastRun.value?.run_at)
   replanning.value = true
@@ -541,7 +566,7 @@ async function save(action: 'lock' | 'move' | 'unlock') {
       action === 'lock' && editing.value.current
         ? { job: editing.value.job, action, crew: s(editing.value.current.crew), day: s(editing.value.current.day), days: len }
         : { job: editing.value.job, action, crew: crew.value, day: day.value, days: len }
-    const runNow = !replanning.value // a run is going: save only, and queue one more run
+    const runNow = true // every save re-runs the planner; n8n waits if a run is already going, so nothing is lost
     log('save →', { ...body, replan: runNow })
     const res = await $fetch('/api/override', { method: 'POST', body: { ...body, passcode: passcode.value, replan: runNow } })
     log('save ✓', res)
@@ -606,10 +631,13 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
       {{ queued }} saved change(s) are waiting for an update that didn't start – press Refresh in a moment.
     </p>
     <p v-else-if="justUpdated" class="banner done">✓ Plan updated with your changes.</p>
-    <p v-else-if="pendingChanges.length" class="banner">
-      {{ pendingChanges.length }} change(s) saved but not in the plan yet:
-      {{ pendingChanges.map((o) => `${s(o.job)} ${s(o.action)}`).join(', ') }} — press Refresh in a minute.
-    </p>
+    <!-- saved changes with no run (e.g. the page was reloaded while a run was queued): one click starts it -->
+    <form v-else-if="pendingChanges.length" class="banner pendingrow" @submit.prevent="updateNow">
+      <span>{{ pendingChanges.length }} change(s) saved but not in the plan yet: {{ pendingChanges.map((o) => `${s(o.job)} ${s(o.action)}`).join(', ') }}.</span>
+      <input v-if="needPass" v-model="passNow" type="text" class="secret" autocomplete="off" placeholder="Passcode" aria-label="Passcode" />
+      <button type="submit" class="primary" :disabled="updating">{{ updating ? 'Starting…' : needPass ? 'Update the plan' : 'Update the plan now' }}</button>
+      <span v-if="updateError" class="bad small">{{ updateError }}</span>
+    </form>
 
     <nav v-if="data">
       <div class="tabs">
@@ -827,6 +855,8 @@ button:disabled { opacity: 0.5; cursor: default; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .banner { background: #fff8e1; border: 1px solid #f0d58a; border-radius: 8px; padding: 10px 12px; }
+.banner.pendingrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.banner.pendingrow input { width: 120px; padding: 6px 8px; }
 .banner.replan { display: flex; align-items: center; gap: 10px; background: #eef4fb; border-color: #b9d1ec; }
 .banner.done { background: #e9f6ec; border-color: #a8d5b3; color: var(--ok); }
 .banner .small-spin { width: 16px; height: 16px; border-width: 2px; flex: 0 0 auto; }
