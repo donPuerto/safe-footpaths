@@ -180,17 +180,23 @@ const firstDayOf = (job: string) => displayPlan.value.filter((x) => s(x.job) ===
 
 // ---- resize (FullCalendar style): drag the right edge of a card or bar to make the job longer or shorter ----
 // Whole days only; the bar grows/shrinks live, then the same confirm panel opens with the new length.
-const resizing = ref<{ job: string; day: string; crew: string; left: number; colW: number; max: number; days: number } | null>(null)
-const colOf = (iso: string) => (new Date(iso + 'T00:00:00Z').getUTCDay() + 6) % 7
+const resizing = ref<{ job: string; day: string; crew: string; days: number } | null>(null)
+// The day column under the pointer, anywhere on the calendar (so a resize can cross into the next week row):
+// the cell whose x-range holds the pointer, in the week row nearest to the pointer.
+function dayUnderPointer(x: number, y: number) {
+  let best: { day: string; dist: number } | null = null
+  for (const el of document.querySelectorAll<HTMLElement>('.cal .cell[data-day]')) {
+    const r = el.getBoundingClientRect()
+    if (x < r.left || x > r.right) continue
+    const dist = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0
+    if (!best || dist < best.dist) best = { day: el.dataset.day!, dist }
+  }
+  return best?.day || ''
+}
 function startResize(e: PointerEvent, p: CalRow, startDay: string) {
   e.preventDefault()
   e.stopPropagation()
-  const handle = e.currentTarget as HTMLElement
-  const grid = handle.closest('.weekgrid') as HTMLElement
-  const g = grid.getBoundingClientRect()
-  const colW = g.width / 5
-  const col = colOf(startDay)
-  resizing.value = { job: s(p.job), day: startDay, crew: s(p.crew), left: g.left + col * colW, colW, max: 5 - col, days: Math.max(1, Math.ceil(Number(p.days) || 1)) }
+  resizing.value = { job: s(p.job), day: startDay, crew: s(p.crew), days: Math.max(1, Math.ceil(Number(p.days) || 1)) }
   // listen on the window, not the handle: the card may be re-rendered (strip <-> lane) while it is being resized
   window.addEventListener('pointermove', moveResize)
   window.addEventListener('pointerup', endResize, { once: true })
@@ -200,7 +206,12 @@ function startResize(e: PointerEvent, p: CalRow, startDay: string) {
 function moveResize(e: PointerEvent) {
   const r = resizing.value
   if (!r) return
-  const n = Math.min(r.max, Math.max(1, Math.round((e.clientX - r.left) / r.colW + 0.5)))
+  // length = work days from the start day to the day under the pointer (weekends/holidays don't count)
+  const under = dayUnderPointer(e.clientX, e.clientY)
+  const i0 = workDays.value.indexOf(r.day)
+  const i1 = workDays.value.indexOf(under)
+  if (i0 < 0 || i1 < 0) return
+  const n = Math.max(1, i1 - i0 + 1)
   if (n !== r.days) {
     r.days = n
     preview.value = { job: r.job, day: r.day, crew: r.crew, days: n }
@@ -708,7 +719,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                 @pointerdown="startResize($event, g, firstDayOf(s(g.job)))" />
             </button>
           </VueDraggable>
-          <article v-for="c in w.days" :key="c.iso" class="cell" :class="{ off: c.holiday, out: !c.work && !c.holiday, school: c.school }">
+          <article v-for="c in w.days" :key="c.iso" class="cell" :data-day="c.iso" :class="{ off: c.holiday, out: !c.work && !c.holiday, school: c.school }">
             <h3>{{ dayLabel(c.iso) }}</h3>
             <span v-if="c.school" class="mtag">VIC school holidays</span>
             <p v-if="c.holiday" class="small muted">Public holiday · no work</p>
