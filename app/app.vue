@@ -796,7 +796,9 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
         <h2>{{ editing.title }}</h2>
         <p v-if="editing.current" class="small muted">Now: {{ dayLabel(s(editing.current.day)) }}, crew {{ editing.current.crew }}</p>
         <p v-else class="small muted">Not in the plan yet · {{ editing.techs }} techs × {{ editing.days }} day(s)</p>
-        <p v-if="editing.dropped && errors.day" class="banner bad small">Can't move it there: {{ errors.day }}</p>
+        <p v-if="editing.dropped && errors.day" class="banner bad small">
+          {{ Number(days) !== editing.days && s(editing.current?.day) === day ? `Can't make it ${days} day${Number(days) === 1 ? '' : 's'}` : "Can't move it there" }}: {{ errors.day }}
+        </p>
         <p v-else-if="editing.dropped" class="banner small">
           <template v-if="Number(days) !== editing.days">Set to <b>{{ days }} day{{ Number(days) === 1 ? '' : 's' }}</b> (estimate was {{ editing.days }}), </template>
           <template v-if="Number(days) !== editing.days && s(editing.current?.day) === day && s(editing.current?.crew) === crew">staying on <b>{{ dayLabel(day) }}</b>, <b>Crew {{ crew }}</b>?</template>
