@@ -6,7 +6,9 @@ import type { PlanData, PlanRow, OverrideRow } from '../shared/types'
 
 const config = useRuntimeConfig()
 // First load may come from Vercel's edge cache (fast). Refresh / after a save asks for fresh data.
-const fresh = ref(0)
+// Always read fresh: a plan read is one Sheets call now, and a cached copy (up to 30 s old at the edge) right after
+// a save would show the card back in its old place.
+const fresh = ref(Date.now())
 const { data, pending, error } = useFetch<PlanData>('/api/plan', {
   server: false,
   query: computed(() => (fresh.value ? { fresh: fresh.value } : {})),
