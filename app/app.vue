@@ -312,6 +312,7 @@ function onDragEnd(e: DraggableEvent<CalRow>) {
   dragEndedAt = Date.now()
   log(e.from === e.to ? 'drag end – put back where it was' : 'drag end (dropped)', blocked.value?.reason || '')
   dragJob.value = ''
+  hoverLane.value = ''
   // SortableJS/VueDraggable update their lists after this event; a moment later, redraw the whole calendar
   // from the data (new render key) so no moved DOM node can be left behind
   setTimeout(() => { rebuildLanes(); calKey.value++ }, 0)
@@ -321,9 +322,11 @@ function onDragEnd(e: DraggableEvent<CalRow>) {
 // SortableJS asks before showing the card in a lane: a lane it can't fit in refuses it (the card stays put),
 // and the lane turns red with the reason, so a refused drop never looks like a broken page.
 const blocked = ref<{ lane: string; reason: string } | null>(null)
+const hoverLane = ref('') // the lane under the pointer while dragging (filled in its crew colour)
 function canMove(e: MoveEvent) {
   if ((e.to as HTMLElement).dataset.strip) return false // the long-bar strip only gives cards, never takes them
   const key = (e.to as HTMLElement).dataset.lane || ''
+  hoverLane.value = key
   const [day = '', crew = ''] = key.split('|')
   const reason = day ? whyNotLane(dragJob.value, day, crew === 'A+B' ? 'A' : crew) : 'Not a day in the plan.'
   blocked.value = reason ? { lane: key, reason } : null
@@ -715,7 +718,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
               <VueDraggable v-for="ln in [...(lanes[laneKey(c.iso, 'A+B')]?.length ? [{ id: 'A+B' }] : []), ...crews]" :key="ln.id"
                 v-model="lanes[laneKey(c.iso, ln.id)]!" v-bind="dragOptions" :data-lane="laneKey(c.iso, ln.id)"
                 class="lane" :class="[crewClass(ln.id), { both: ln.id === 'A+B', nodrop: dragJob && blocked?.lane === laneKey(c.iso, ln.id),
-                  ready: dragJob && laneFits(c.iso, ln.id), cant: dragJob && !laneFits(c.iso, ln.id) }]"
+                  ready: dragJob && laneFits(c.iso, ln.id), cant: dragJob && !laneFits(c.iso, ln.id), over: dragJob && hoverLane === laneKey(c.iso, ln.id) }]"
                 @start="onDragStart" @end="onDragEnd" @add="onDrop($event, c.iso, ln.id)">
                 <template v-for="p in lanes[laneKey(c.iso, ln.id)]" :key="s(p.job) + p.part">
                 <!-- day 2+ of a multi-day job: a slim bar joined to the first-day card -->
@@ -739,7 +742,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                 </button>
                 </template>
                 <p v-if="ln.id !== 'A+B' && !cell(c.iso, ln.id).length" class="small free">
-                  {{ dragJob && laneFits(c.iso, ln.id) ? `Drop here – Crew ${ln.id} free` : `Crew ${ln.id} free` }}
+                  {{ dragJob && laneFits(c.iso, ln.id) ? `Drop here → Crew ${ln.id}` : `Crew ${ln.id} free` }}
                 </p>
               </VueDraggable>
             </template>
@@ -912,9 +915,12 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .lane:empty { min-height: 16px; } /* day taken by a long bar: a slim strip, still a drop target */
 .lane + .lane { border-top: 1px dashed var(--line); padding-top: 5px; margin-top: 2px; } /* Crew A above, Crew B below */
 .lane.both { flex: 0 0 auto; min-height: 0; }
-/* while a card is dragged: lanes that can take it are green ("Drop here"), the ones that can't fade */
-.lane.ready { outline: 2px dashed var(--ok); outline-offset: 2px; background: #eef8f0; min-height: 44px; }
-.lane.ready .free { border-color: var(--ok); color: var(--ok); font-weight: 600; }
+/* while a card is dragged: lanes that can take it get a thin dashed outline in THEIR crew colour (blue = it would
+   go to Crew A, green = Crew B); the lane under the pointer fills; lanes that can't take it fade */
+.lane.ready { outline: 1.5px dashed color-mix(in srgb, var(--c) 55%, transparent); outline-offset: 2px; min-height: 44px; }
+.lane.ready .free { border-color: var(--c); color: var(--c); }
+.lane.ready.over { outline: 2px dashed var(--c); background: color-mix(in srgb, var(--c) 9%, #fff); }
+.lane.ready.over .free { font-weight: 600; }
 .lane.cant { opacity: 0.45; }
 .lane.nodrop { outline: 2px dashed var(--bad); outline-offset: 2px; background: #fdecea; opacity: 1; }
 .droptoast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 30; margin: 0; max-width: min(560px, calc(100vw - 32px));
