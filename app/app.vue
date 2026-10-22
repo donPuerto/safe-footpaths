@@ -302,6 +302,8 @@ function onDragEnd(e: DraggableEvent<CalRow>) {
   dragEndedAt = Date.now()
   log(e.from === e.to ? 'drag end – put back where it was' : 'drag end (dropped)', blocked.value?.reason || '')
   dragJob.value = ''
+  // SortableJS/VueDraggable update their lists after this event; a moment later, redraw everything from the data
+  setTimeout(rebuildLanes, 0)
   // a refused drop snaps the card back; keep the reason on screen long enough to read it
   if (blocked.value) { const b = blocked.value; setTimeout(() => { if (blocked.value === b) blocked.value = null }, 8000) }
 }
@@ -509,7 +511,7 @@ function openEdit(job: unknown) {
   resetForm({ values: { crew: techs > 2 ? 'A+B' : s(current?.crew) || 'A', day: s(current?.day) || workDays.value[0] || '', days: curDays, passcode: '' } })
   passLocked.value = true
   message.value = ''
-  log('panel open', { job: id, techs, days, now: current ? `${s(current.day)} crew ${s(current.crew)} (${s(current.source)})` : 'not planned', replanning: replanning.value })
+  log('panel open', { job: id, techs, days: days0, now: current ? `${s(current.day)} crew ${s(current.crew)} (${s(current.source)})` : 'not planned', replanning: replanning.value })
 }
 function closeEdit() {
   preview.value = null // not saved: the card goes back (a saved move is in justSaved)
