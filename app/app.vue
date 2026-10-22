@@ -851,8 +851,9 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .swatch.off { background: repeating-linear-gradient(45deg, #f1f2f4, #f1f2f4 4px, #e2e5e9 4px, #e2e5e9 8px); }
 .mtag { align-self: flex-start; max-width: 100%; font-size: 11px; line-height: 1.5; background: #f0d58a; color: #5c4300; border-radius: 4px; padding: 0 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Each crew lane stretches to fill the day, so the whole day is a drop target (top half A, bottom half B). */
-.lane { flex: 0 0 auto; display: flex; flex-direction: column; gap: 3px; min-height: 40px; padding: 3px; border-radius: 8px;
-  background: color-mix(in srgb, var(--c) 5%, transparent); border-left: 3px solid color-mix(in srgb, var(--c) 35%, transparent); }
+.lane { flex: 0 0 auto; display: flex; flex-direction: column; gap: 3px; min-height: 0; padding: 2px; border-radius: 8px; }
+.lane:empty { min-height: 16px; } /* day taken by a long bar: a slim strip, still a drop target */
+.lane + .lane { border-top: 1px dashed var(--line); padding-top: 5px; margin-top: 2px; } /* Crew A above, Crew B below */
 .lane.both { flex: 0 0 auto; min-height: 0; }
 .lane.nodrop { outline: 2px dashed var(--bad); outline-offset: 2px; background: #fdecea; }
 .droptoast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 30; margin: 0; max-width: min(560px, calc(100vw - 32px));
