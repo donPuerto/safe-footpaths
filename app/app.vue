@@ -484,7 +484,8 @@ watch(data, () => {
 onBeforeUnmount(() => clearInterval(replanTimer))
 
 // ---- Move / Lock panel ----
-const editing = ref<{ job: string; title: string; techs: number; days: number; current?: PlanRow; dropped?: boolean } | null>(null)
+// days = the Backlog estimate; nowDays = the length the job has in the plan right now (Dan may have resized it)
+const editing = ref<{ job: string; title: string; techs: number; days: number; nowDays: number; current?: PlanRow; dropped?: boolean } | null>(null)
 const saving = ref(false)
 const message = ref('')
 
@@ -551,7 +552,7 @@ watch([day, crew, days, editing], () => {
   if (!ed) return
   const cur = ed.current
   const len = Number(days.value) || ed.days
-  const changed = day.value && (s(cur?.day) !== day.value || s(cur?.crew) !== crew.value || len !== ed.days)
+  const changed = day.value && (s(cur?.day) !== day.value || s(cur?.crew) !== crew.value || len !== ed.nowDays)
   preview.value = changed ? { job: ed.job, day: String(day.value), crew: String(crew.value), days: len } : null
 })
 const [passcode] = defineField('passcode')
@@ -565,7 +566,7 @@ function openEdit(job: unknown) {
   const current = data.value?.plan.find((p) => s(p.job) === id)
   const techs = Number(r?.techs ?? current?.techs ?? 2)
   const days0 = Number(r?.days ?? current?.days ?? 1) // the Backlog estimate
-  editing.value = { job: id, title: `${id} · ${org(r?.organisation || current?.organisation, id)}`, techs, days: days0, current }
+  editing.value = { job: id, title: `${id} · ${org(r?.organisation || current?.organisation, id)}`, techs, days: days0, nowDays: Number(current?.days) || days0, current }
   // Fresh form each time: passcode always starts empty.
   const curDays = Number(current?.days) || days0
   resetForm({ values: { crew: techs > 2 ? 'A+B' : s(current?.crew) || 'A', day: s(current?.day) || workDays.value[0] || '', days: curDays, passcode: '' } })
@@ -807,11 +808,11 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
         <p v-if="editing.current" class="small muted">Now: {{ dayLabel(s(editing.current.day)) }}, crew {{ editing.current.crew }}</p>
         <p v-else class="small muted">Not in the plan yet · {{ editing.techs }} techs × {{ editing.days }} day(s)</p>
         <p v-if="editing.dropped && errors.day" class="banner bad small">
-          {{ Number(days) !== editing.days && s(editing.current?.day) === day ? `Can't make it ${days} day${Number(days) === 1 ? '' : 's'}` : "Can't move it there" }}: {{ errors.day }}
+          {{ Number(days) !== editing.nowDays && s(editing.current?.day) === day ? `Can't make it ${days} day${Number(days) === 1 ? '' : 's'}` : "Can't move it there" }}: {{ errors.day }}
         </p>
         <p v-else-if="editing.dropped" class="banner small">
-          <template v-if="Number(days) !== editing.days">Set to <b>{{ days }} day{{ Number(days) === 1 ? '' : 's' }}</b> (estimate was {{ editing.days }}), </template>
-          <template v-if="Number(days) !== editing.days && s(editing.current?.day) === day && s(editing.current?.crew) === crew">staying on <b>{{ dayLabel(day) }}</b>, <b>Crew {{ crew }}</b>?</template>
+          <template v-if="Number(days) !== editing.nowDays">Set to <b>{{ days }} day{{ Number(days) === 1 ? '' : 's' }}</b> (was {{ editing.nowDays }}{{ editing.nowDays !== editing.days ? `, estimate ${editing.days}` : '' }}), </template>
+          <template v-if="Number(days) !== editing.nowDays && s(editing.current?.day) === day && s(editing.current?.crew) === crew">staying on <b>{{ dayLabel(day) }}</b>, <b>Crew {{ crew }}</b>?</template>
           <template v-else>move to <b>{{ dayLabel(day) }}</b>, <b>{{ crew === 'A+B' ? 'both crews' : 'Crew ' + crew }}</b>?</template>
           Press <b>Save</b> to confirm.
         </p>
