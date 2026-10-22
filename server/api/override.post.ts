@@ -43,7 +43,7 @@ export default defineEventHandler(async (event) => {
     crew: action === 'unlock' ? '' : body.crew,
     day: action === 'unlock' ? '' : body.day,
     updated_by: 'Dan (web page)',
-    updated_at: new Date().toISOString().replace('T', ' ').slice(0, 16) + ' UTC',
+    updated_at: new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC', // to the second, like run_at
   }
   try {
     // replan:false = save only; the page starts one planner run for all queued changes later
