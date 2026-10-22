@@ -172,12 +172,20 @@ const displayPlan = computed<CalRow[]>(() => {
 // One list per day × lane ("A", "B", and "A+B" for 4-person jobs), rebuilt from displayPlan.
 const laneKey = (day: string, crew: string) => `${day}|${crew}`
 const lanes = ref<Record<string, CalRow[]>>({})
-watchEffect(() => {
+function rebuildLanes() {
   const m: Record<string, CalRow[]> = {}
   for (const d of workDays.value) for (const c of ['A', 'B', 'A+B']) m[laneKey(d, c)] = []
   for (const p of displayPlan.value) m[laneKey(s(p.day), s(p.crew))]?.push(p)
   lanes.value = m
-})
+}
+watchEffect(rebuildLanes)
+// A multi-day job is one job: the full card on its first day ("2 days: Fri 30 Oct → Mon 2 Nov"),
+// a slim "continued" bar on the other days. Only the first-day card can be dragged.
+const isContinued = (p: CalRow) => /^day ([2-9]|\d{2,})/.test(s(p.part))
+const spanLabel = (p: CalRow) => {
+  const days = displayPlan.value.filter((x) => s(x.job) === s(p.job)).map((x) => s(x.day)).sort()
+  return days.length > 1 ? `${days.length} days: ${dayLabel(days[0]!)} → ${dayLabel(days.at(-1)!)}` : ''
+}
 const dragJob = ref('')
 let lastOver = ''
 function onDragStart(e: DraggableEvent<CalRow>) {
@@ -202,7 +210,7 @@ function canMove(e: MoveEvent) {
   return !reason
 }
 const dragOptions = {
-  group: 'jobs', sort: false, animation: 180, draggable: '.job',
+  group: 'jobs', sort: false, animation: 180, draggable: '.job:not(.cont)',
   forceFallback: true, fallbackOnBody: true, fallbackTolerance: 4, // own drag image: solid card, also on touch screens
   ghostClass: 'drag-placeholder', chosenClass: 'drag-chosen', dragClass: 'drag-flying',
   onMove: canMove,
@@ -228,6 +236,13 @@ function whyNotLane(job: string, day: string, crew: string) {
 // Dropped into another lane: open the confirm panel with that day and crew (the card is already there).
 function onDrop(e: DraggableEvent<CalRow>, day: string, crew: string) {
   const job = s(e.data?.job)
+  // SortableJS keeps the card in the last lane that accepted it; if the pointer was over a refused
+  // (red) lane when Dan let go, cancel instead of dropping somewhere he didn't aim at.
+  if (blocked.value) {
+    log('drop cancelled – let go over a lane the job cannot go to', blocked.value.reason)
+    rebuildLanes()
+    return
+  }
   log('drop', { job, day, crew })
   if (!job) return
   openEdit(job)
@@ -486,11 +501,17 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                 v-model="lanes[laneKey(c.iso, ln.id)]!" v-bind="dragOptions" :data-lane="laneKey(c.iso, ln.id)"
                 class="lane" :class="[crewClass(ln.id), { both: ln.id === 'A+B', nodrop: dragJob && blocked?.lane === laneKey(c.iso, ln.id) }]"
                 @start="onDragStart" @end="onDragEnd" @add="onDrop($event, c.iso, ln.id)">
-                <button v-for="p in lanes[laneKey(c.iso, ln.id)]" :key="s(p.job) + p.part" type="button" class="job"
-                  :class="[crewClass(p.crew), { incoming: p.moving }]" :data-job="s(p.job)" @click="openEdit(p.job)">
+                <template v-for="p in lanes[laneKey(c.iso, ln.id)]" :key="s(p.job) + p.part">
+                <!-- day 2+ of a multi-day job: a slim bar joined to the first-day card -->
+                <button v-if="isContinued(p)" type="button" class="job cont" :class="[crewClass(p.crew), { incoming: p.moving }]"
+                  :data-job="s(p.job)" @click="openEdit(p.job)">
+                  ↳ <strong>{{ s(p.job) }}</strong> continued <span class="muted">({{ p.part }})</span>
+                </button>
+                <button v-else type="button" class="job"
+                  :class="[crewClass(p.crew), { incoming: p.moving, multi: spanLabel(p) }]" :data-job="s(p.job)" @click="openEdit(p.job)">
                   <i class="chip">{{ s(p.crew) === 'A+B' ? 'Both' : 'Crew ' + s(p.crew) }}</i>
                   <strong>{{ s(p.job) }}</strong> {{ org(p.organisation, p.job) }}
-                  <span class="small">{{ p.suburb }} · {{ s(p.days) }}d {{ p.part }}</span>
+                  <span class="small">{{ p.suburb }} · {{ spanLabel(p) || s(p.days) + 'd' }}</span>
                   <span v-if="p.moving === 'unsaved'" class="tag unsaved-tag">Not saved yet – confirm in the box</span>
                   <span v-else-if="p.moving === 'saved'" class="tag saved-tag">✓ Saved here</span>
                   <template v-else>
@@ -498,6 +519,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                     <span v-if="s(p.source).startsWith('Dan')" class="tag">🔒 {{ p.source }}</span>
                   </template>
                 </button>
+                </template>
                 <p v-if="ln.id !== 'A+B' && !cell(c.iso, ln.id).length" class="small free">Crew {{ ln.id }} free</p>
               </VueDraggable>
             </template>
@@ -658,6 +680,10 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .droptoast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 30; margin: 0; max-width: min(560px, calc(100vw - 32px));
   background: var(--bad); color: #fff; padding: 10px 14px; border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); font-size: 14px; }
 .lane .job { cursor: grab; touch-action: none; }
+/* multi-day: the first-day card gets a thick right edge "→", the other days a slim joined bar */
+.job.multi { border-right: 6px solid var(--c); }
+.lane .job.cont { cursor: pointer; touch-action: auto; padding: 4px 8px; font-size: 13px; border-left: 6px solid var(--c);
+  background: color-mix(in srgb, var(--c) 14%, #fff); color: var(--ink); }
 .lane .job:hover { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12); }
 .job.incoming { border: 2px dashed var(--c); border-left-width: 4px; background: color-mix(in srgb, var(--c) 10%, #fff); animation: pop 0.25s ease-out; }
 /* SortableJS: where the card will land (placeholder), the card picked up, and the copy following the pointer */
