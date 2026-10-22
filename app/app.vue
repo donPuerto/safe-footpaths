@@ -579,6 +579,8 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
       <div v-for="w in weeks" :key="w.label" class="week">
         <h2>{{ w.label }}</h2>
         <div class="weekgrid">
+          <!-- wide screens: date headings first, then the long bars, then the day boxes (like FullCalendar) -->
+          <div v-for="c in w.days" :key="'h' + c.iso" class="dayhead" :class="{ off: c.holiday, school: c.school }">{{ dayLabel(c.iso) }}</div>
           <!-- multi-day jobs: one bar across their days (one strip row per crew), dragged by the bar -->
           <VueDraggable v-for="sk in stripKeys(w.days[0]!.iso)" :key="sk" v-model="strips[sk]!" v-bind="stripOptions"
             data-strip="1" class="strip" @start="onDragStart" @end="onDragEnd">
@@ -784,7 +786,13 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .droptoast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 30; margin: 0; max-width: min(560px, calc(100vw - 32px));
   background: var(--bad); color: #fff; padding: 10px 14px; border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); font-size: 14px; }
 .lane .job { cursor: grab; touch-action: none; }
-/* multi-day on wide screens: a strip row per crew above the days; each bar spans its columns (subgrid) */
+/* wide screens: one heading row for the week (the day boxes' own headings are hidden) */
+.dayhead { font-size: 13px; font-weight: 700; padding: 6px 8px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); }
+.dayhead.off { background: repeating-linear-gradient(45deg, #f1f2f4, #f1f2f4 6px, #e7e9ec 6px, #e7e9ec 12px); }
+.dayhead.school { background: #fff3cc; border-color: #f0d58a; }
+@media (min-width: 901px) { .cell > h3 { display: none; } }
+@media (max-width: 900px) { .dayhead { display: none; } }
+/* multi-day on wide screens: a strip row per crew under the headings; each bar spans its columns (subgrid) */
 .strip { grid-column: 1 / span 5; display: grid; grid-template-columns: subgrid; align-items: stretch; min-height: 0; }
 .job.span { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; padding: 8px 12px; border-left: 4px solid var(--c);
   background: color-mix(in srgb, var(--c) 10%, #fff); }
