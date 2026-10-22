@@ -293,6 +293,8 @@ const spanLabel = (p: CalRow) => {
 }
 const dragJob = ref('')
 const calKey = ref(0) // bumped after every drag: the calendar re-renders from the data
+// While dragging: can the dragged job go into this lane? (lanes that can are shown green, "Drop here")
+const laneFits = (day: string, crew: string) => !!dragJob.value && !whyNotLane(dragJob.value, day, crew === 'A+B' ? 'A' : crew)
 let lastOver = ''
 function onDragStart(e: DraggableEvent<CalRow>) {
   dragJob.value = s(e.data?.job)
@@ -684,7 +686,8 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
               <!-- one draggable list per lane: both-crew jobs (only when there are some), then Crew A, Crew B -->
               <VueDraggable v-for="ln in [...(lanes[laneKey(c.iso, 'A+B')]?.length ? [{ id: 'A+B' }] : []), ...crews]" :key="ln.id"
                 v-model="lanes[laneKey(c.iso, ln.id)]!" v-bind="dragOptions" :data-lane="laneKey(c.iso, ln.id)"
-                class="lane" :class="[crewClass(ln.id), { both: ln.id === 'A+B', nodrop: dragJob && blocked?.lane === laneKey(c.iso, ln.id) }]"
+                class="lane" :class="[crewClass(ln.id), { both: ln.id === 'A+B', nodrop: dragJob && blocked?.lane === laneKey(c.iso, ln.id),
+                  ready: dragJob && laneFits(c.iso, ln.id), cant: dragJob && !laneFits(c.iso, ln.id) }]"
                 @start="onDragStart" @end="onDragEnd" @add="onDrop($event, c.iso, ln.id)">
                 <template v-for="p in lanes[laneKey(c.iso, ln.id)]" :key="s(p.job) + p.part">
                 <!-- day 2+ of a multi-day job: a slim bar joined to the first-day card -->
@@ -707,7 +710,9 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                     @pointerdown="startResize($event, p, c.iso)" />
                 </button>
                 </template>
-                <p v-if="ln.id !== 'A+B' && !cell(c.iso, ln.id).length" class="small free">Crew {{ ln.id }} free</p>
+                <p v-if="ln.id !== 'A+B' && !cell(c.iso, ln.id).length" class="small free">
+                  {{ dragJob && laneFits(c.iso, ln.id) ? `Drop here – Crew ${ln.id} free` : `Crew ${ln.id} free` }}
+                </p>
               </VueDraggable>
             </template>
           </article>
@@ -877,7 +882,11 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .lane:empty { min-height: 16px; } /* day taken by a long bar: a slim strip, still a drop target */
 .lane + .lane { border-top: 1px dashed var(--line); padding-top: 5px; margin-top: 2px; } /* Crew A above, Crew B below */
 .lane.both { flex: 0 0 auto; min-height: 0; }
-.lane.nodrop { outline: 2px dashed var(--bad); outline-offset: 2px; background: #fdecea; }
+/* while a card is dragged: lanes that can take it are green ("Drop here"), the ones that can't fade */
+.lane.ready { outline: 2px dashed var(--ok); outline-offset: 2px; background: #eef8f0; min-height: 44px; }
+.lane.ready .free { border-color: var(--ok); color: var(--ok); font-weight: 600; }
+.lane.cant { opacity: 0.45; }
+.lane.nodrop { outline: 2px dashed var(--bad); outline-offset: 2px; background: #fdecea; opacity: 1; }
 .droptoast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 30; margin: 0; max-width: min(560px, calc(100vw - 32px));
   background: var(--bad); color: #fff; padding: 10px 14px; border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); font-size: 14px; }
 .lane .job { cursor: grab; touch-action: none; }
