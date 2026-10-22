@@ -649,8 +649,8 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
               <span v-else-if="g.moving === 'saved'" class="tag saved-tag">✓ Saved here</span>
               <span v-else-if="s(g.source).startsWith('Dan')" class="tag">🔒 {{ g.source }}</span>
               <span v-if="!g.last" class="contmark">continues →</span>
-              <span v-if="g.last" class="resize" title="Drag to make the job longer or shorter" @pointerdown="startResize($event, g, firstDayOf(s(g.job)))"
-                @pointermove="moveResize" @pointerup="endResize" @pointercancel="endResize" />
+              <span v-if="g.last" class="resize" role="button" :aria-label="`Resize ${s(g.job)}`" title="Drag to make the job longer or shorter"
+                @pointerdown="startResize($event, g, firstDayOf(s(g.job)))" @pointermove="moveResize" @pointerup="endResize" @pointercancel="endResize" />
             </button>
           </VueDraggable>
           <article v-for="c in w.days" :key="c.iso" class="cell" :class="{ off: c.holiday, out: !c.work && !c.holiday, school: c.school }">
@@ -681,8 +681,8 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                     <span class="small muted reason">{{ p.reason }}</span>
                     <span v-if="s(p.source).startsWith('Dan')" class="tag">🔒 {{ p.source }}</span>
                   </template>
-                  <span class="resize" title="Drag to make the job longer or shorter" @pointerdown="startResize($event, p, c.iso)"
-                    @pointermove="moveResize" @pointerup="endResize" @pointercancel="endResize" />
+                  <span class="resize" role="button" :aria-label="`Resize ${s(p.job)}`" title="Drag to make the job longer or shorter"
+                    @pointerdown="startResize($event, p, c.iso)" @pointermove="moveResize" @pointerup="endResize" @pointercancel="endResize" />
                 </button>
                 </template>
                 <p v-if="ln.id !== 'A+B' && !cell(c.iso, ln.id).length" class="small free">Crew {{ ln.id }} free</p>
