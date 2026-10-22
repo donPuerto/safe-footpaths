@@ -324,7 +324,7 @@ const calKey = ref(0) // bumped after every drag: the calendar re-renders from t
 const laneRoom = (day: string, crew: string) => {
   const used = cell(day, crew).reduce((a, p) => a + jobLoad(Number(p.days) || 1), 0)
   const left = Math.round((1 - used) * 4) / 4
-  if (left <= 0) return ''
+  if (left <= 0) return 'full'
   if (left >= 1) return 'free'
   return `${({ 0.25: '¼', 0.5: '½', 0.75: '¾' } as Record<number, string>)[left] || left} day free`
 }
@@ -784,7 +784,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                     @pointerdown="startResize($event, p, c.iso)" />
                 </button>
                 </template>
-                <p v-if="ln.id !== 'A+B' && laneRoom(c.iso, ln.id)" class="small free">
+                <p v-if="ln.id !== 'A+B'" class="small free" :class="{ full: laneRoom(c.iso, ln.id) === 'full' }">
                   {{ dragJob && laneFits(c.iso, ln.id) ? `Drop here → Crew ${ln.id}` : `Crew ${ln.id}` }} · {{ laneRoom(c.iso, ln.id) }}
                 </p>
               </VueDraggable>
@@ -1008,6 +1008,7 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .saved-tag { background: #e9f6ec; color: var(--ok); }
 @keyframes pop { from { transform: scale(0.94); opacity: 0.3; } to { transform: none; opacity: 1; } }
 .free { margin: 0; color: var(--muted); border: 1px dashed var(--line); border-radius: 6px; padding: 3px 8px; font-size: 12px; }
+.free.full { border-style: solid; background: #f1f2f4; color: #8a919c; }
 .tag { display: inline-block; font-size: 12px; background: #eef2f7; border-radius: 6px; padding: 1px 6px; }
 .list { display: grid; gap: 8px; }
 .row { display: flex; gap: 12px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
