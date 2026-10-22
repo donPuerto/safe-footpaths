@@ -18,6 +18,16 @@ export default defineEventHandler(async (event) => {
   if (!appPasscode || !same(String(body?.passcode ?? '').trim(), appPasscode))
     throw createError({ statusCode: 401, statusMessage: 'Wrong passcode' })
 
+  // "replan": nothing to save, just run the planner (the page sends it when a queued change is waiting)
+  if (body.action === 'replan') {
+    try {
+      await $fetch(`${n8nWebhookBase}/sf-override`, { method: 'POST', body: { action: 'replan' }, headers: { 'x-sf-key': n8nWebhookKey } })
+    } catch (e: any) {
+      throw createError({ statusCode: 502, statusMessage: `Could not start the planner (${e?.statusCode || 'no response'})` })
+    }
+    return { ok: true, replanning: true }
+  }
+
   const job = String(body.job ?? '').trim()
   const action = body.action
   if (!/^\d+$/.test(job)) throw createError({ statusCode: 400, statusMessage: 'Bad job number' })
@@ -36,7 +46,12 @@ export default defineEventHandler(async (event) => {
     updated_at: new Date().toISOString().replace('T', ' ').slice(0, 16) + ' UTC',
   }
   try {
-    await $fetch(`${n8nWebhookBase}/sf-override`, { method: 'POST', body: row, headers: { 'x-sf-key': n8nWebhookKey } })
+    // replan:false = save only; the page starts one planner run for all queued changes later
+    await $fetch(`${n8nWebhookBase}/sf-override`, {
+      method: 'POST',
+      body: { ...row, replan: body.replan !== false },
+      headers: { 'x-sf-key': n8nWebhookKey },
+    })
   } catch (e: any) {
     throw createError({ statusCode: 502, statusMessage: `Could not save to the Sheet (${e?.statusCode || 'no response'})` })
   }

@@ -27,9 +27,10 @@ export interface PlanData {
 }
 
 export interface OverrideRequest {
-  job: string
-  action: 'lock' | 'move' | 'unlock'
+  job?: string
+  action: 'lock' | 'move' | 'unlock' | 'replan'
   crew?: 'A' | 'B' | 'A+B'
   day?: string
   passcode: string
+  replan?: boolean // false = save only (a planner run is already going; the page queues one more)
 }

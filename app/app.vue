@@ -144,13 +144,17 @@ const lockedNow = (job: unknown) => {
 // ---- what the calendar shows: the plan + Dan's moves the planner hasn't applied yet ----
 // A moved card sits in its new place at once: while the panel is open ("not saved yet") and, after Save,
 // straight away ("saved") – the planner re-plans the other jobs in the background.
-const preview = ref<{ job: string; day: string; crew: string; saved: boolean } | null>(null)
+// preview = the move set up in the open panel; justSaved = moves saved this second, until the fresh
+// data (pendingChanges) carries them.
+const preview = ref<{ job: string; day: string; crew: string } | null>(null)
+const justSaved = ref(new Map<string, { day: string; crew: string }>())
 type CalRow = PlanRow & { moving?: 'unsaved' | 'saved' }
 const displayPlan = computed<CalRow[]>(() => {
   const plan = data.value?.plan ?? []
   const moves = new Map<string, { day: string; crew: string; saved: boolean }>()
   for (const o of pendingChanges.value) if (s(o.action) === 'move') moves.set(s(o.job), { day: s(o.day), crew: s(o.crew), saved: true })
-  if (preview.value) moves.set(preview.value.job, preview.value)
+  for (const [job, mv] of justSaved.value) moves.set(job, { ...mv, saved: true })
+  if (preview.value) moves.set(preview.value.job, { ...preview.value, saved: false })
   const out: CalRow[] = plan.filter((p) => !moves.has(s(p.job)))
   for (const [job, mv] of moves) {
     const base = plan.find((p) => s(p.job) === job)
@@ -254,12 +258,28 @@ function onDrop(e: DraggableEvent<CalRow>, day: string, crew: string) {
   nextTick(() => validateField('day').then((r) => log('drop target check', r.valid ? 'OK' : r.errors.join(' '))))
 }
 
-// ---- after a save the web API re-runs the planner (~1 min): watch for the new run, then show it ----
+// ---- after a save the web API re-runs the planner (~20 s): watch for the new run, then show it ----
 // A fresh read is one Google Sheets call (batchGet), so checking every 10 s for up to 3 min is cheap.
+// Changes saved WHILE a run is going are saved with replan:false and queued; when that run ends the
+// page starts ONE more run for all of them – runs never overlap, and Dan never waits to save.
 const replanning = ref(false)
+const queued = ref(0) // changes saved during the current run, waiting for the next one
 const justUpdated = ref(false)
+let sessionPasscode = '' // kept in memory only (never stored or shown) so the page can start the queued run
 let runBefore = ''
 let replanTimer: ReturnType<typeof setInterval> | undefined
+async function runQueued() {
+  const n = queued.value
+  queued.value = 0
+  log(`starting one more update for ${n} queued change(s)`)
+  try {
+    await $fetch('/api/override', { method: 'POST', body: { action: 'replan', passcode: sessionPasscode } })
+    startReplanWatch()
+  } catch (e: any) {
+    log('queued update could not start', e?.statusCode, e?.statusMessage)
+    queued.value = n // keep them; the banner says to press Refresh / save again
+  }
+}
 function startReplanWatch() {
   runBefore = s(lastRun.value?.run_at)
   replanning.value = true
@@ -278,9 +298,17 @@ watch(lastRun, (r) => {
     log('re-plan done', { run: s(r?.run_at), checks: s(r?.ok) })
     clearInterval(replanTimer)
     replanning.value = false
-    preview.value = null // the real card is now in the plan
+    if (queued.value) { runQueued(); return } // changes came in during that run: one more, for all of them
     justUpdated.value = true
     setTimeout(() => { justUpdated.value = false }, 8000)
+  }
+})
+// once fresh data carries a saved move (as a pending change or already in the plan), stop bridging it
+watch(data, () => {
+  for (const [job, mv] of justSaved.value) {
+    const inPending = pendingChanges.value.some((o) => s(o.job) === job)
+    const inPlan = (data.value?.plan ?? []).some((p) => s(p.job) === job && s(p.day) === mv.day && s(p.crew) === mv.crew)
+    if (inPending || inPlan) justSaved.value.delete(job)
   }
 })
 onBeforeUnmount(() => clearInterval(replanTimer))
@@ -345,10 +373,10 @@ watch(crew, () => { if (editing.value && day.value) validateField('day') }) // r
 // Live preview: while the panel is open, the card shows in the day/crew picked (dropped or chosen).
 watch([day, crew, editing], () => {
   const ed = editing.value
-  if (!ed || preview.value?.saved) return
+  if (!ed) return
   const cur = ed.current
   const moved = day.value && (s(cur?.day) !== day.value || s(cur?.crew) !== crew.value)
-  preview.value = moved ? { job: ed.job, day: String(day.value), crew: String(crew.value), saved: false } : null
+  preview.value = moved ? { job: ed.job, day: String(day.value), crew: String(crew.value) } : null
 })
 const [passcode] = defineField('passcode')
 const passLocked = ref(true) // read-only until focused, so no autofill
@@ -369,7 +397,7 @@ function openEdit(job: unknown) {
   log('panel open', { job: id, techs, days, now: current ? `${s(current.day)} crew ${s(current.crew)} (${s(current.source)})` : 'not planned', replanning: replanning.value })
 }
 function closeEdit() {
-  if (!preview.value?.saved) preview.value = null // cancelled: the card goes back
+  preview.value = null // not saved: the card goes back (a saved move is in justSaved)
   editing.value = null
   resetForm({ values: { day: '', crew: 'A', passcode: '' } })
   passLocked.value = true
@@ -384,14 +412,16 @@ async function save(action: 'lock' | 'move' | 'unlock') {
       action === 'lock' && editing.value.current
         ? { job: editing.value.job, action, crew: s(editing.value.current.crew), day: s(editing.value.current.day) }
         : { job: editing.value.job, action, crew: crew.value, day: day.value }
-    log('save →', body)
-    const res = await $fetch('/api/override', { method: 'POST', body: { ...body, passcode: passcode.value } })
+    const runNow = !replanning.value // a run is going: save only, and queue one more run
+    log('save →', { ...body, replan: runNow })
+    const res = await $fetch('/api/override', { method: 'POST', body: { ...body, passcode: passcode.value, replan: runNow } })
     log('save ✓', res)
-    if (action === 'move' && preview.value?.job === editing.value.job) preview.value.saved = true
-    else preview.value = null
-    message.value = (action === 'unlock' ? 'Unlocked.' : 'Saved.') + ' Updating the plan now – the calendar refreshes by itself in about 20 seconds.'
+    sessionPasscode = String(passcode.value)
+    if (action === 'move') justSaved.value.set(editing.value.job, { day: String(body.day), crew: String(body.crew) })
+    if (runNow) startReplanWatch()
+    else { queued.value++; log(`queued – will be included in the next update (${queued.value} waiting)`) }
     reloadFresh()
-    startReplanWatch()
+    closeEdit() // done: the card already sits where it was saved
   } catch (e: any) {
     log('save ✗', e?.statusCode, e?.statusMessage || e?.data?.statusMessage || e?.message)
     if (e?.statusCode === 401) setFieldError('passcode', 'Wrong passcode.')
@@ -436,9 +466,17 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
       <p>Loading the plan from the Google Sheet… this takes a few seconds.</p>
     </div>
     <p v-if="replanning" class="banner replan">
-      <span class="spinner small-spin" /> Saved. Updating the plan with your change… the calendar refreshes by itself in about 20 seconds.
+      <span class="spinner small-spin" />
+      <span>
+        Saved. Updating the plan… the other jobs refresh by themselves in about 20 seconds.
+        <b v-if="queued">{{ queued }} newer change(s) saved – they go into one more update right after this one.</b>
+        You can keep making changes.
+      </span>
     </p>
-    <p v-else-if="justUpdated" class="banner done">✓ Plan updated with your change.</p>
+    <p v-else-if="queued" class="banner">
+      {{ queued }} saved change(s) are waiting for an update that didn't start – press Refresh in a moment.
+    </p>
+    <p v-else-if="justUpdated" class="banner done">✓ Plan updated with your changes.</p>
     <p v-else-if="pendingChanges.length" class="banner">
       {{ pendingChanges.length }} change(s) saved but not in the plan yet:
       {{ pendingChanges.map((o) => `${s(o.job)} ${s(o.action)}`).join(', ') }} — press Refresh in a minute.
@@ -567,8 +605,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
           Move to <b>{{ dayLabel(day) }}</b>, <b>{{ crew === 'A+B' ? 'both crews' : 'Crew ' + crew }}</b>? Press <b>Save move</b> to confirm.
         </p>
 
-        <p v-if="replanning" class="banner small">The plan is still updating with your last change (about 20 seconds). Make the next change after that.</p>
-        <button v-if="editing.current && !editing.dropped" type="button" :disabled="saving || replanning" @click="saveWithPasscode('lock')">🔒 Lock where it is</button>
+        <button v-if="editing.current && !editing.dropped" type="button" :disabled="saving" @click="saveWithPasscode('lock')">🔒 Lock where it is</button>
 
         <label>Move to day
           <select v-model="day" :class="{ invalid: errors.day }">
@@ -596,8 +633,8 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
         </label>
 
         <div class="actions">
-          <button type="submit" class="primary" :disabled="saving || replanning">Save move</button>
-          <button v-if="lockedNow(editing.job)" type="button" :disabled="saving || replanning" @click="saveWithPasscode('unlock')">Unlock</button>
+          <button type="submit" class="primary" :disabled="saving">{{ saving ? 'Saving…' : 'Save move' }}</button>
+          <button v-if="lockedNow(editing.job)" type="button" :disabled="saving" @click="saveWithPasscode('unlock')">Unlock</button>
           <button type="button" @click="closeEdit">Close</button>
         </div>
         <p v-if="message" class="small" :class="/Saved|Unlocked/.test(message) ? 'ok' : 'bad'">{{ message }}</p>
