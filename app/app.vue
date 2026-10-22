@@ -176,13 +176,57 @@ const displayPlan = computed<CalRow[]>(() => {
 // One list per day × lane ("A", "B", and "A+B" for 4-person jobs), rebuilt from displayPlan.
 const laneKey = (day: string, crew: string) => `${day}|${crew}`
 const lanes = ref<Record<string, CalRow[]>>({})
+// Wide screens: multi-day jobs are ONE bar across their days (like FullCalendar), in a strip at the top of
+// each week. Narrow screens (days scroll sideways): first-day card + "continued" bars inside the lanes.
+const narrow = ref(false)
+onMounted(() => {
+  const mq = window.matchMedia('(max-width: 900px)')
+  narrow.value = mq.matches
+  mq.addEventListener('change', (e) => { narrow.value = e.matches })
+})
+const isMulti = (p: CalRow) => /^day \d+ of \d+/.test(s(p.part))
+const mondayOf = (iso: string) => addDays(iso, -((new Date(iso + 'T00:00:00Z').getUTCDay() + 6) % 7))
+type Seg = CalRow & { col: number; span: number; first: boolean; last: boolean }
+const strips = ref<Record<string, Seg[]>>({}) // key "monday|crew"
 function rebuildLanes() {
   const m: Record<string, CalRow[]> = {}
   for (const d of workDays.value) for (const c of ['A', 'B', 'A+B']) m[laneKey(d, c)] = []
-  for (const p of displayPlan.value) m[laneKey(s(p.day), s(p.crew))]?.push(p)
+  const st: Record<string, Seg[]> = {}
+  const byJob = new Map<string, CalRow[]>()
+  for (const p of displayPlan.value) {
+    if (isMulti(p) && !narrow.value) {
+      if (!byJob.has(s(p.job))) byJob.set(s(p.job), [])
+      byJob.get(s(p.job))!.push(p)
+    } else m[laneKey(s(p.day), s(p.crew))]?.push(p)
+  }
+  // one bar per run of side-by-side days in the same week (a weekend or holiday splits it)
+  for (const rows of byJob.values()) {
+    rows.sort((a, b) => s(a.day).localeCompare(s(b.day)))
+    let seg: Seg | null = null
+    let week = ''
+    let lastCol = -9
+    rows.forEach((p, i) => {
+      const wk = mondayOf(s(p.day))
+      const col = (new Date(s(p.day) + 'T00:00:00Z').getUTCDay() + 6) % 7
+      if (seg && wk === week && col === lastCol + 1) seg.span++
+      else {
+        seg = { ...p, col, span: 1, first: i === 0, last: false }
+        week = wk
+        ;(st[`${wk}|${s(p.crew)}`] ||= []).push(seg)
+      }
+      lastCol = col
+      if (i === rows.length - 1) seg.last = true
+    })
+  }
   lanes.value = m
+  strips.value = st
 }
 watchEffect(rebuildLanes)
+const stripKeys = (monday: string) =>
+  ['A', 'B', 'A+B']
+    .filter((c) => c === 'A+B' || crewFilter.value === 'all' || crewFilter.value === c)
+    .map((c) => `${monday}|${c}`)
+    .filter((k) => strips.value[k]?.length)
 // A multi-day job is one job: the full card on its first day ("2 days: Fri 30 Oct → Mon 2 Nov"),
 // a slim "continued" bar on the other days. Only the first-day card can be dragged.
 const isContinued = (p: CalRow) => /^day ([2-9]|\d{2,})/.test(s(p.part))
@@ -210,6 +254,7 @@ function onDragEnd(e: DraggableEvent<CalRow>) {
 // and the lane turns red with the reason, so a refused drop never looks like a broken page.
 const blocked = ref<{ lane: string; reason: string } | null>(null)
 function canMove(e: MoveEvent) {
+  if ((e.to as HTMLElement).dataset.strip) return false // the long-bar strip only gives cards, never takes them
   const key = (e.to as HTMLElement).dataset.lane || ''
   const [day = '', crew = ''] = key.split('|')
   const reason = day ? whyNotLane(dragJob.value, day, crew === 'A+B' ? 'A' : crew) : 'Not a day in the plan.'
@@ -223,6 +268,8 @@ const dragOptions = {
   ghostClass: 'drag-placeholder', chosenClass: 'drag-chosen', dragClass: 'drag-flying',
   onMove: canMove,
 }
+// strip of long bars: cards can be dragged out of it onto a day, nothing is dropped into it
+const stripOptions = { ...dragOptions, group: { name: 'jobs', pull: true, put: false }, draggable: '.job' }
 // '' when the job fits in that lane, otherwise the reason in plain words (same rules as the planner)
 function whyNotLane(job: string, day: string, crew: string) {
   const r = data.value?.ranked.find((x) => s(x.job) === job)
@@ -532,6 +579,22 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
       <div v-for="w in weeks" :key="w.label" class="week">
         <h2>{{ w.label }}</h2>
         <div class="weekgrid">
+          <!-- multi-day jobs: one bar across their days (one strip row per crew), dragged by the bar -->
+          <VueDraggable v-for="sk in stripKeys(w.days[0]!.iso)" :key="sk" v-model="strips[sk]!" v-bind="stripOptions"
+            data-strip="1" class="strip" @start="onDragStart" @end="onDragEnd">
+            <button v-for="g in strips[sk]" :key="s(g.job) + g.col" type="button" class="job span"
+              :class="[crewClass(g.crew), { incoming: g.moving, 'cont-left': !g.first, 'cont-right': !g.last }]"
+              :style="{ gridColumn: `${g.col + 1} / span ${g.span}` }" :data-job="s(g.job)" @click="openEdit(g.job)">
+              <span v-if="!g.first" class="contmark">← continued</span>
+              <i class="chip">{{ s(g.crew) === 'A+B' ? 'Both' : 'Crew ' + s(g.crew) }}</i>
+              <strong>{{ s(g.job) }}</strong> <span>{{ org(g.organisation, g.job) }}</span>
+              <span class="small">{{ g.suburb }} · {{ spanLabel(g) }}</span>
+              <span v-if="g.moving === 'unsaved'" class="tag unsaved-tag">Not saved yet – confirm in the box</span>
+              <span v-else-if="g.moving === 'saved'" class="tag saved-tag">✓ Saved here</span>
+              <span v-else-if="s(g.source).startsWith('Dan')" class="tag">🔒 {{ g.source }}</span>
+              <span v-if="!g.last" class="contmark">continues →</span>
+            </button>
+          </VueDraggable>
           <article v-for="c in w.days" :key="c.iso" class="cell" :class="{ off: c.holiday, out: !c.work && !c.holiday, school: c.school }">
             <h3>{{ dayLabel(c.iso) }}</h3>
             <span v-if="c.school" class="mtag">VIC school holidays</span>
@@ -721,7 +784,15 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .droptoast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 30; margin: 0; max-width: min(560px, calc(100vw - 32px));
   background: var(--bad); color: #fff; padding: 10px 14px; border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); font-size: 14px; }
 .lane .job { cursor: grab; touch-action: none; }
-/* multi-day: the first-day card gets a thick right edge "→", the other days a slim joined bar */
+/* multi-day on wide screens: a strip row per crew above the days; each bar spans its columns (subgrid) */
+.strip { grid-column: 1 / span 5; display: grid; grid-template-columns: subgrid; align-items: stretch; min-height: 0; }
+.job.span { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; padding: 8px 12px; border-left: 4px solid var(--c);
+  background: color-mix(in srgb, var(--c) 10%, #fff); }
+.job.span .small { display: inline; }
+.job.span.cont-left { border-left-style: dashed; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.job.span.cont-right { border-right: 4px dashed var(--c); border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.contmark { font-size: 12px; font-weight: 600; color: var(--c); }
+/* multi-day on narrow screens: the first-day card gets a thick right edge "→", the other days a slim joined bar */
 .job.multi { border-right: 6px solid var(--c); }
 .lane .job.cont { cursor: pointer; touch-action: auto; padding: 4px 8px; font-size: 13px; border-left: 6px solid var(--c);
   background: color-mix(in srgb, var(--c) 14%, #fff); color: var(--ink); }
