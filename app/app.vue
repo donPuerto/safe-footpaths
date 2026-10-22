@@ -186,6 +186,10 @@ watchEffect(rebuildLanes)
 // A multi-day job is one job: the full card on its first day ("2 days: Fri 30 Oct → Mon 2 Nov"),
 // a slim "continued" bar on the other days. Only the first-day card can be dragged.
 const isContinued = (p: CalRow) => /^day ([2-9]|\d{2,})/.test(s(p.part))
+const startDayOf = (p: CalRow) => {
+  const first = displayPlan.value.filter((x) => s(x.job) === s(p.job)).map((x) => s(x.day)).sort()[0]
+  return first ? dayLabel(first) : ''
+}
 const spanLabel = (p: CalRow) => {
   const days = displayPlan.value.filter((x) => s(x.job) === s(p.job)).map((x) => s(x.day)).sort()
   return days.length > 1 ? `${days.length} days: ${dayLabel(days[0]!)} → ${dayLabel(days.at(-1)!)}` : ''
@@ -543,7 +547,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                 <!-- day 2+ of a multi-day job: a slim bar joined to the first-day card -->
                 <button v-if="isContinued(p)" type="button" class="job cont" :class="[crewClass(p.crew), { incoming: p.moving }]"
                   :data-job="s(p.job)" @click="openEdit(p.job)">
-                  ↳ <strong>{{ s(p.job) }}</strong> continued <span class="muted">({{ p.part }})</span>
+                  ↳ <strong>{{ s(p.job) }}</strong> continued from {{ startDayOf(p) }} <span class="muted">({{ p.part }})</span>
                 </button>
                 <button v-else type="button" class="job"
                   :class="[crewClass(p.crew), { incoming: p.moving, multi: spanLabel(p) }]" :data-job="s(p.job)" @click="openEdit(p.job)">
