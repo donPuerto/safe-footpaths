@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { useForm } from 'vee-validate'
+import { VueDraggable, type DraggableEvent } from 'vue-draggable-plus'
+import type { MoveEvent } from 'sortablejs'
 import type { PlanData, PlanRow, OverrideRow } from '../shared/types'
 
 const config = useRuntimeConfig()
@@ -121,10 +123,7 @@ const weeks = computed(() => {
   return out
 })
 
-const cell = (day: string, crew: string) => (data.value?.plan ?? []).filter((p) => s(p.day) === day && s(p.crew).split('+').includes(crew))
-// Each day: both-crew jobs once on top, then one lane per crew (the lanes are the drop targets).
-const bothJobs = (day: string) => (data.value?.plan ?? []).filter((p) => s(p.day) === day && s(p.crew) === 'A+B')
-const laneJobs = (day: string, crew: string) => (data.value?.plan ?? []).filter((p) => s(p.day) === day && s(p.crew) === crew)
+const cell = (day: string, crew: string) => displayPlan.value.filter((p) => s(p.day) === day && s(p.crew).split('+').includes(crew))
 const crewClass = (crew: unknown) => 'crew-' + (s(crew) === 'A+B' ? 'AB' : s(crew))
 const lastRun = computed(() => (data.value?.runs ?? []).at(-1))
 
@@ -142,22 +141,68 @@ const lockedNow = (job: unknown) => {
   const o = overrides.value.get(s(job))
   return !!o && s(o.action) !== 'unlock'
 }
-// Saved moves the planner hasn't applied yet, shown as a dashed "moving here" note in the target lane.
-const movingInto = (day: string, crew: string) =>
-  pendingChanges.value.filter((o) => s(o.action) === 'move' && s(o.day) === day && s(o.crew).split('+').includes(crew))
+// ---- what the calendar shows: the plan + Dan's moves the planner hasn't applied yet ----
+// A moved card sits in its new place at once: while the panel is open ("not saved yet") and, after Save,
+// straight away ("saved") – the planner re-plans the other jobs in the background.
+const preview = ref<{ job: string; day: string; crew: string; saved: boolean } | null>(null)
+type CalRow = PlanRow & { moving?: 'unsaved' | 'saved' }
+const displayPlan = computed<CalRow[]>(() => {
+  const plan = data.value?.plan ?? []
+  const moves = new Map<string, { day: string; crew: string; saved: boolean }>()
+  for (const o of pendingChanges.value) if (s(o.action) === 'move') moves.set(s(o.job), { day: s(o.day), crew: s(o.crew), saved: true })
+  if (preview.value) moves.set(preview.value.job, preview.value)
+  const out: CalRow[] = plan.filter((p) => !moves.has(s(p.job)))
+  for (const [job, mv] of moves) {
+    const base = plan.find((p) => s(p.job) === job)
+    const r = data.value?.ranked.find((x) => s(x.job) === job)
+    const n = Math.max(1, Math.ceil(Number(r?.days ?? base?.days) || 1))
+    const i = workDays.value.indexOf(mv.day)
+    if (i < 0) continue
+    workDays.value.slice(i, i + n).forEach((d, k) =>
+      out.push({
+        ...(base as PlanRow), job, organisation: r?.organisation ?? base?.organisation ?? '', suburb: r?.suburb ?? base?.suburb ?? '',
+        techs: r?.techs ?? base?.techs ?? 2, days: r?.days ?? base?.days ?? 1, day: d, crew: mv.crew,
+        part: n > 1 ? `day ${k + 1} of ${n}` : '', source: 'Dan (moving)', reason: '', moving: mv.saved ? 'saved' : 'unsaved',
+      }))
+  }
+  return out
+})
 
-// ---- drag and drop (mouse): drop a job on a crew's lane -> the Move panel opens pre-filled, Dan presses Save ----
+// ---- drag and drop: vue-draggable-plus (SortableJS) – the card itself slides; works with mouse and touch ----
+// One list per day × lane ("A", "B", and "A+B" for 4-person jobs), rebuilt from displayPlan.
+const laneKey = (day: string, crew: string) => `${day}|${crew}`
+const lanes = ref<Record<string, CalRow[]>>({})
+watchEffect(() => {
+  const m: Record<string, CalRow[]> = {}
+  for (const d of workDays.value) for (const c of ['A', 'B', 'A+B']) m[laneKey(d, c)] = []
+  for (const p of displayPlan.value) m[laneKey(s(p.day), s(p.crew))]?.push(p)
+  lanes.value = m
+})
 const dragJob = ref('')
-const dropAt = ref('')
-function startDrag(e: DragEvent, job: unknown) {
-  dragJob.value = s(job)
-  e.dataTransfer?.setData('text/plain', s(job))
-  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
-  const p = data.value?.plan.find((x) => s(x.job) === s(job))
-  log('drag start', { job: s(job), from: p ? `${s(p.day)} crew ${s(p.crew)}` : 'not planned' })
+let lastOver = ''
+function onDragStart(e: DraggableEvent<CalRow>) {
+  dragJob.value = s(e.data?.job)
+  lastOver = ''
+  log('drag start', { job: dragJob.value, from: `${s(e.data?.day)} crew ${s(e.data?.crew)}` })
 }
-// While dragging: does the job fit in this lane next to Dan's other changes? (red outline if not)
-const dropOk = ref(true)
+function onDragEnd(e: DraggableEvent<CalRow>) {
+  log(e.from === e.to ? 'drag end – put back where it was' : 'drag end (dropped)')
+  dragJob.value = ''
+}
+// SortableJS asks before showing the card in a lane: a lane it can't fit in refuses it (the card stays put).
+function canMove(e: MoveEvent) {
+  const key = (e.to as HTMLElement).dataset.lane || ''
+  const [day = '', crew = ''] = key.split('|')
+  const ok = !!day && fitsLane(dragJob.value, day, crew === 'A+B' ? 'A' : crew)
+  if (lastOver !== key) { log('drag over', { day, crew, fits: ok }); lastOver = key }
+  return ok
+}
+const dragOptions = {
+  group: 'jobs', sort: false, animation: 180, draggable: '.job',
+  forceFallback: true, fallbackOnBody: true, fallbackTolerance: 4, // own drag image: solid card, also on touch screens
+  ghostClass: 'drag-placeholder', chosenClass: 'drag-chosen', dragClass: 'drag-flying',
+  onMove: canMove,
+}
 function fitsLane(job: string, day: string, crew: string) {
   const r = data.value?.ranked.find((x) => s(x.job) === job)
   const days = Number(r?.days) || 1
@@ -168,27 +213,10 @@ function fitsLane(job: string, day: string, crew: string) {
   return workDays.value.slice(i, i + n).every((d) =>
     crews.every((c) => [...dansOtherJobs(d, c, job).values()].reduce((a, b) => a + b, 0) + jobLoad(days) <= 1 + 1e-9))
 }
-function overLane(day: string, crew: string) {
-  if (dropAt.value !== day + crew) {
-    dropOk.value = fitsLane(dragJob.value, day, crew)
-    log('drag over', { day, crew, fits: dropOk.value })
-  }
-  dropAt.value = day + crew
-}
-function endDrag(e?: DragEvent) {
-  // dropOn() clears dragJob first, so a job still set here means the drop never happened
-  if (e && dragJob.value) log('drag end – NOT dropped: released outside a crew lane', { job: dragJob.value })
-  else if (e) log('drag end (dropped)')
-  dragJob.value = ''
-  dropAt.value = ''
-}
-function leaveLane(e: DragEvent) {
-  if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) dropAt.value = ''
-}
-function dropOn(day: string, crew: string) {
-  const job = dragJob.value
-  log('drop', { job: job || '(none – drag did not start on a job card)', day, crew })
-  endDrag()
+// Dropped into another lane: open the confirm panel with that day and crew (the card is already there).
+function onDrop(e: DraggableEvent<CalRow>, day: string, crew: string) {
+  const job = s(e.data?.job)
+  log('drop', { job, day, crew })
   if (!job) return
   openEdit(job)
   if (!editing.value) return
@@ -223,6 +251,7 @@ watch(lastRun, (r) => {
     log('re-plan done', { run: s(r?.run_at), checks: s(r?.ok) })
     clearInterval(replanTimer)
     replanning.value = false
+    preview.value = null // the real card is now in the plan
     justUpdated.value = true
     setTimeout(() => { justUpdated.value = false }, 8000)
   }
@@ -286,6 +315,14 @@ const { defineField, errors, handleSubmit, validateField, resetForm, setFieldVal
 const [day] = defineField('day')
 const [crew] = defineField('crew')
 watch(crew, () => { if (editing.value && day.value) validateField('day') }) // room depends on the crew too
+// Live preview: while the panel is open, the card shows in the day/crew picked (dropped or chosen).
+watch([day, crew, editing], () => {
+  const ed = editing.value
+  if (!ed || preview.value?.saved) return
+  const cur = ed.current
+  const moved = day.value && (s(cur?.day) !== day.value || s(cur?.crew) !== crew.value)
+  preview.value = moved ? { job: ed.job, day: String(day.value), crew: String(crew.value), saved: false } : null
+})
 const [passcode] = defineField('passcode')
 const passLocked = ref(true) // read-only until focused, so no autofill
 // An old version remembered the passcode on the device; forget it.
@@ -305,6 +342,7 @@ function openEdit(job: unknown) {
   log('panel open', { job: id, techs, days, now: current ? `${s(current.day)} crew ${s(current.crew)} (${s(current.source)})` : 'not planned', replanning: replanning.value })
 }
 function closeEdit() {
+  if (!preview.value?.saved) preview.value = null // cancelled: the card goes back
   editing.value = null
   resetForm({ values: { day: '', crew: 'A', passcode: '' } })
   passLocked.value = true
@@ -322,6 +360,8 @@ async function save(action: 'lock' | 'move' | 'unlock') {
     log('save →', body)
     const res = await $fetch('/api/override', { method: 'POST', body: { ...body, passcode: passcode.value } })
     log('save ✓', res)
+    if (action === 'move' && preview.value?.job === editing.value.job) preview.value.saved = true
+    else preview.value = null
     message.value = (action === 'unlock' ? 'Unlocked.' : 'Saved.') + ' Updating the plan now – the calendar refreshes by itself in about 20 seconds.'
     reloadFresh()
     startReplanWatch()
@@ -426,30 +466,25 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
             <p v-if="c.holiday" class="small muted">Public holiday · no work</p>
             <p v-else-if="!c.work" class="small muted">Not in this plan</p>
             <template v-else>
-              <button v-for="p in bothJobs(c.iso)" :key="s(p.job) + p.part" class="job crew-AB" draggable="true"
-                @dragstart="startDrag($event, p.job)" @dragend="endDrag" @click="openEdit(p.job)">
-                <i class="chip">Both</i>
-                <strong>{{ s(p.job) }}</strong> {{ org(p.organisation, p.job) }}
-                <span class="small">{{ p.suburb }} · {{ s(p.days) }}d {{ p.part }}</span>
-                <span class="small muted reason">{{ p.reason }}</span>
-                <span v-if="s(p.source).startsWith('Dan')" class="tag">🔒 {{ p.source }}</span>
-              </button>
-              <div v-for="cr in crews" :key="cr.id" class="lane"
-                :class="[crewClass(cr.id), { drop: dropAt === c.iso + cr.id, nodrop: dropAt === c.iso + cr.id && !dropOk }]"
-                @dragover.prevent="overLane(c.iso, cr.id)" @dragleave="leaveLane" @drop.prevent="dropOn(c.iso, cr.id)">
-                <button v-for="p in laneJobs(c.iso, cr.id)" :key="s(p.job) + p.part" class="job" :class="crewClass(p.crew)" draggable="true"
-                  @dragstart="startDrag($event, p.job)" @dragend="endDrag" @click="openEdit(p.job)">
-                  <i class="chip">Crew {{ cr.id }}</i>
+              <!-- one draggable list per lane: both-crew jobs (only when there are some), then Crew A, Crew B -->
+              <VueDraggable v-for="ln in [...(lanes[laneKey(c.iso, 'A+B')]?.length ? [{ id: 'A+B' }] : []), ...crews]" :key="ln.id"
+                v-model="lanes[laneKey(c.iso, ln.id)]!" v-bind="dragOptions" :data-lane="laneKey(c.iso, ln.id)"
+                class="lane" :class="[crewClass(ln.id), { both: ln.id === 'A+B' }]"
+                @start="onDragStart" @end="onDragEnd" @add="onDrop($event, c.iso, ln.id)">
+                <button v-for="p in lanes[laneKey(c.iso, ln.id)]" :key="s(p.job) + p.part" type="button" class="job"
+                  :class="[crewClass(p.crew), { incoming: p.moving }]" :data-job="s(p.job)" @click="openEdit(p.job)">
+                  <i class="chip">{{ s(p.crew) === 'A+B' ? 'Both' : 'Crew ' + s(p.crew) }}</i>
                   <strong>{{ s(p.job) }}</strong> {{ org(p.organisation, p.job) }}
                   <span class="small">{{ p.suburb }} · {{ s(p.days) }}d {{ p.part }}</span>
-                  <span class="small muted reason">{{ p.reason }}</span>
-                  <span v-if="s(p.source).startsWith('Dan')" class="tag">🔒 {{ p.source }}</span>
+                  <span v-if="p.moving === 'unsaved'" class="tag unsaved-tag">Not saved yet – confirm in the box</span>
+                  <span v-else-if="p.moving === 'saved'" class="tag saved-tag">✓ Saved here</span>
+                  <template v-else>
+                    <span class="small muted reason">{{ p.reason }}</span>
+                    <span v-if="s(p.source).startsWith('Dan')" class="tag">🔒 {{ p.source }}</span>
+                  </template>
                 </button>
-                <p v-for="o in movingInto(c.iso, cr.id)" :key="s(o.job)" class="small ghost">↪ {{ s(o.job) }} will move here – updating the plan (about 20 s)</p>
-                <p v-if="!laneJobs(c.iso, cr.id).length && !cell(c.iso, cr.id).length && !movingInto(c.iso, cr.id).length" class="small free">
-                  Crew {{ cr.id }} free
-                </p>
-              </div>
+                <p v-if="ln.id !== 'A+B' && !cell(c.iso, ln.id).length" class="small free">Crew {{ ln.id }} free</p>
+              </VueDraggable>
             </template>
           </article>
         </div>
@@ -603,10 +638,17 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 /* Each crew lane stretches to fill the day, so the whole day is a drop target (top half A, bottom half B). */
 .lane { flex: 1 0 auto; display: flex; flex-direction: column; gap: 4px; min-height: 48px; padding: 4px; border-radius: 8px;
   background: color-mix(in srgb, var(--c) 5%, transparent); border-left: 3px solid color-mix(in srgb, var(--c) 35%, transparent); }
-.lane.drop { outline: 2px dashed var(--c); outline-offset: 2px; background: #f3f8ff; }
-.lane.nodrop { outline-color: var(--bad); background: #fdecea; }
-.job[draggable='true'] { cursor: grab; }
-.ghost { margin: 0; border: 1px dashed var(--c); border-radius: 6px; padding: 4px 8px; color: var(--c); }
+.lane.both { flex: 0 0 auto; min-height: 0; }
+.lane .job { cursor: grab; touch-action: none; }
+.lane .job:hover { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12); }
+.job.incoming { border: 2px dashed var(--c); border-left-width: 4px; background: color-mix(in srgb, var(--c) 10%, #fff); animation: pop 0.25s ease-out; }
+/* SortableJS: where the card will land (placeholder), the card picked up, and the copy following the pointer */
+.drag-placeholder { opacity: 0.45; outline: 2px dashed var(--c); outline-offset: -2px; }
+.drag-chosen { box-shadow: 0 0 0 2px var(--c); }
+.drag-flying { opacity: 1 !important; transform: rotate(2deg); box-shadow: 0 14px 30px rgba(0, 0, 0, 0.28); background: #fff; cursor: grabbing; }
+.unsaved-tag { background: #fff3cc; color: #5c4300; }
+.saved-tag { background: #e9f6ec; color: var(--ok); }
+@keyframes pop { from { transform: scale(0.94); opacity: 0.3; } to { transform: none; opacity: 1; } }
 .free { margin: 0; color: var(--muted); border: 1px dashed var(--line); border-radius: 6px; padding: 4px 8px; }
 .tag { display: inline-block; font-size: 12px; background: #eef2f7; border-radius: 6px; padding: 1px 6px; }
 .list { display: grid; gap: 8px; }
