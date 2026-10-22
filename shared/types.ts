@@ -13,7 +13,7 @@ export interface PlanRow {
 export interface NeedsHumanRow { job: Cell; type: string; reason: string }
 export interface CheckRow { check: string; result: string; detail: string; run_at: string }
 export interface RunRow { run_at: string; ok: string; jobs: Cell; placed: Cell; needs_human: Cell; rule_order: string }
-export interface OverrideRow { job: Cell; action: string; crew: string; day: string; updated_by: string; updated_at: string }
+export interface OverrideRow { job: Cell; action: string; crew: string; day: string; days?: Cell; updated_by: string; updated_at: string }
 export interface SettingRow { key: string; value: Cell }
 
 export interface PlanData {
@@ -31,6 +31,7 @@ export interface OverrideRequest {
   action: 'lock' | 'move' | 'unlock' | 'replan'
   crew?: 'A' | 'B' | 'A+B'
   day?: string
+  days?: number // resize: Dan's length for this job, replaces the Backlog estimate
   passcode: string
   replan?: boolean // false = save only (a planner run is already going; the page queues one more)
 }

@@ -146,31 +146,76 @@ const lockedNow = (job: unknown) => {
 // straight away ("saved") – the planner re-plans the other jobs in the background.
 // preview = the move set up in the open panel; justSaved = moves saved this second, until the fresh
 // data (pendingChanges) carries them.
-const preview = ref<{ job: string; day: string; crew: string } | null>(null)
-const justSaved = ref(new Map<string, { day: string; crew: string }>())
+// days = Dan's length when he resized the job (replaces the Backlog estimate), else the estimate.
+type Move = { day: string; crew: string; days?: number }
+const preview = ref<({ job: string } & Move) | null>(null)
+const justSaved = ref(new Map<string, Move>())
 type CalRow = PlanRow & { moving?: 'unsaved' | 'saved' }
 const displayPlan = computed<CalRow[]>(() => {
   const plan = data.value?.plan ?? []
-  const moves = new Map<string, { day: string; crew: string; saved: boolean }>()
-  for (const o of pendingChanges.value) if (s(o.action) === 'move') moves.set(s(o.job), { day: s(o.day), crew: s(o.crew), saved: true })
+  const moves = new Map<string, Move & { saved: boolean }>()
+  for (const o of pendingChanges.value)
+    if (s(o.action) === 'move' || s(o.action) === 'lock')
+      moves.set(s(o.job), { day: s(o.day), crew: s(o.crew), days: Number(o.days) || undefined, saved: true })
   for (const [job, mv] of justSaved.value) moves.set(job, { ...mv, saved: true })
   if (preview.value) moves.set(preview.value.job, { ...preview.value, saved: false })
   const out: CalRow[] = plan.filter((p) => !moves.has(s(p.job)))
   for (const [job, mv] of moves) {
     const base = plan.find((p) => s(p.job) === job)
     const r = data.value?.ranked.find((x) => s(x.job) === job)
-    const n = Math.max(1, Math.ceil(Number(r?.days ?? base?.days) || 1))
+    const len = mv.days || Number(r?.days ?? base?.days) || 1
+    const n = Math.max(1, Math.ceil(len))
     const i = workDays.value.indexOf(mv.day)
     if (i < 0) continue
     workDays.value.slice(i, i + n).forEach((d, k) =>
       out.push({
         ...(base as PlanRow), job, organisation: r?.organisation ?? base?.organisation ?? '', suburb: r?.suburb ?? base?.suburb ?? '',
-        techs: r?.techs ?? base?.techs ?? 2, days: r?.days ?? base?.days ?? 1, day: d, crew: mv.crew,
+        techs: r?.techs ?? base?.techs ?? 2, days: len, day: d, crew: mv.crew,
         part: n > 1 ? `day ${k + 1} of ${n}` : '', source: 'Dan (moving)', reason: '', moving: mv.saved ? 'saved' : 'unsaved',
       }))
   }
   return out
 })
+const firstDayOf = (job: string) => displayPlan.value.filter((x) => s(x.job) === job).map((x) => s(x.day)).sort()[0] || ''
+
+// ---- resize (FullCalendar style): drag the right edge of a card or bar to make the job longer or shorter ----
+// Whole days only; the bar grows/shrinks live, then the same confirm panel opens with the new length.
+const resizing = ref<{ job: string; day: string; crew: string; left: number; colW: number; max: number; days: number } | null>(null)
+const colOf = (iso: string) => (new Date(iso + 'T00:00:00Z').getUTCDay() + 6) % 7
+function startResize(e: PointerEvent, p: CalRow, startDay: string) {
+  e.preventDefault()
+  e.stopPropagation()
+  const handle = e.currentTarget as HTMLElement
+  const grid = handle.closest('.weekgrid') as HTMLElement
+  const g = grid.getBoundingClientRect()
+  const colW = g.width / 5
+  const col = colOf(startDay)
+  resizing.value = { job: s(p.job), day: startDay, crew: s(p.crew), left: g.left + col * colW, colW, max: 5 - col, days: Math.max(1, Math.ceil(Number(p.days) || 1)) }
+  handle.setPointerCapture(e.pointerId)
+  log('resize start', { job: s(p.job), from: `${resizing.value.days} day(s)` })
+}
+function moveResize(e: PointerEvent) {
+  const r = resizing.value
+  if (!r) return
+  const n = Math.min(r.max, Math.max(1, Math.round((e.clientX - r.left) / r.colW + 0.5)))
+  if (n !== r.days) {
+    r.days = n
+    preview.value = { job: r.job, day: r.day, crew: r.crew, days: n }
+    log('resize', { days: n })
+  }
+}
+function endResize() {
+  const r = resizing.value
+  if (!r) return
+  resizing.value = null
+  openEdit(r.job)
+  if (!editing.value) return
+  setFieldValue('day', r.day)
+  if (editing.value.techs <= 2) setFieldValue('crew', r.crew)
+  setFieldValue('days', r.days)
+  editing.value.dropped = true
+  nextTick(() => validateField('day').then((res) => log('resize check', res.valid ? 'OK' : res.errors.join(' '))))
+}
 
 // ---- drag and drop: vue-draggable-plus (SortableJS) – the card itself slides; works with mouse and touch ----
 // One list per day × lane ("A", "B", and "A+B" for 4-person jobs), rebuilt from displayPlan.
@@ -264,6 +309,7 @@ function canMove(e: MoveEvent) {
 }
 const dragOptions = {
   group: 'jobs', sort: false, animation: 180, draggable: '.job:not(.cont)',
+  filter: '.resize', preventOnFilter: false, // the resize handle resizes, it never starts a drag
   forceFallback: true, fallbackOnBody: true, fallbackTolerance: 4, // own drag image: solid card, also on touch screens
   ghostClass: 'drag-placeholder', chosenClass: 'drag-chosen', dragClass: 'drag-flying',
   onMove: canMove,
@@ -383,7 +429,7 @@ function dansOtherJobs(day: string, crew: string, exceptJob: string) {
   for (const o of pendingChanges.value)
     if (s(o.action) === 'move' && s(o.day) === day && s(o.crew).split('+').includes(crew) && s(o.job) !== exceptJob) {
       const r = data.value?.ranked.find((x) => s(x.job) === s(o.job))
-      out.set(s(o.job), jobLoad(Number(r?.days) || 1))
+      out.set(s(o.job), jobLoad(Number(o.days) || Number(r?.days) || 1))
     }
   return out
 }
@@ -393,11 +439,12 @@ const { defineField, errors, handleSubmit, validateField, resetForm, setFieldVal
     day: (v: string, ctx: { form: Record<string, unknown> }) => {
       const i = workDays.value.indexOf(v)
       if (i < 0) return 'Pick a work day in the plan.'
-      const n = Math.max(1, Math.ceil(editing.value?.days || 1))
+      const len = Number(ctx.form.days) || editing.value?.days || 1
+      const n = Math.max(1, Math.ceil(len))
       if (i + n > workDays.value.length)
         return `This job takes ${n} work days, so it can't start on ${dayLabel(v)}: the plan ends on ${dayLabel(workDays.value.at(-1)!)}.`
       // room left on each day the job would use, for each crew it needs
-      const need = jobLoad(editing.value?.days || 1)
+      const need = jobLoad(len)
       for (const d of workDays.value.slice(i, i + n))
         for (const c of String(ctx.form.crew || 'A').split('+')) {
           const others = dansOtherJobs(d, c, editing.value?.job || '')
@@ -414,20 +461,25 @@ const { defineField, errors, handleSubmit, validateField, resetForm, setFieldVal
       if ((editing.value?.techs ?? 2) > 2 && v !== 'A+B') return `Needs ${editing.value?.techs} technicians, so both crews.`
       return true
     },
+    days: (v: unknown) => (Number(v) > 0 && Number(v) <= 10 ? true : 'Pick a length between a quarter day and 10 days.'),
     passcode: (v: string) => (v?.trim() ? true : 'Type the passcode to save.'),
   },
-  initialValues: { day: '', crew: 'A', passcode: '' },
+  initialValues: { day: '', crew: 'A', days: 1, passcode: '' },
 })
 const [day] = defineField('day')
 const [crew] = defineField('crew')
-watch(crew, () => { if (editing.value && day.value) validateField('day') }) // room depends on the crew too
-// Live preview: while the panel is open, the card shows in the day/crew picked (dropped or chosen).
-watch([day, crew, editing], () => {
+const [days] = defineField('days')
+const dayOptions = [0.25, 0.5, 1, 2, 3, 4, 5]
+const lengthOptions = computed(() => [...new Set([...dayOptions, editing.value?.days || 1])].sort((a, b) => a - b))
+watch([crew, days], () => { if (editing.value && day.value) validateField('day') }) // room depends on the crew and length too
+// Live preview: while the panel is open, the card shows in the day/crew/length picked (dropped, resized or chosen).
+watch([day, crew, days, editing], () => {
   const ed = editing.value
   if (!ed) return
   const cur = ed.current
-  const moved = day.value && (s(cur?.day) !== day.value || s(cur?.crew) !== crew.value)
-  preview.value = moved ? { job: ed.job, day: String(day.value), crew: String(crew.value) } : null
+  const len = Number(days.value) || ed.days
+  const changed = day.value && (s(cur?.day) !== day.value || s(cur?.crew) !== crew.value || len !== ed.days)
+  preview.value = changed ? { job: ed.job, day: String(day.value), crew: String(crew.value), days: len } : null
 })
 const [passcode] = defineField('passcode')
 const passLocked = ref(true) // read-only until focused, so no autofill
@@ -439,10 +491,11 @@ function openEdit(job: unknown) {
   const r = data.value?.ranked.find((x) => s(x.job) === id)
   const current = data.value?.plan.find((p) => s(p.job) === id)
   const techs = Number(r?.techs ?? current?.techs ?? 2)
-  const days = Number(r?.days ?? current?.days ?? 1)
-  editing.value = { job: id, title: `${id} · ${org(r?.organisation || current?.organisation, id)}`, techs, days, current }
+  const days0 = Number(r?.days ?? current?.days ?? 1) // the Backlog estimate
+  editing.value = { job: id, title: `${id} · ${org(r?.organisation || current?.organisation, id)}`, techs, days: days0, current }
   // Fresh form each time: passcode always starts empty.
-  resetForm({ values: { crew: techs > 2 ? 'A+B' : s(current?.crew) || 'A', day: s(current?.day) || workDays.value[0] || '', passcode: '' } })
+  const curDays = Number(current?.days) || days0
+  resetForm({ values: { crew: techs > 2 ? 'A+B' : s(current?.crew) || 'A', day: s(current?.day) || workDays.value[0] || '', days: curDays, passcode: '' } })
   passLocked.value = true
   message.value = ''
   log('panel open', { job: id, techs, days, now: current ? `${s(current.day)} crew ${s(current.crew)} (${s(current.source)})` : 'not planned', replanning: replanning.value })
@@ -450,7 +503,7 @@ function openEdit(job: unknown) {
 function closeEdit() {
   preview.value = null // not saved: the card goes back (a saved move is in justSaved)
   editing.value = null
-  resetForm({ values: { day: '', crew: 'A', passcode: '' } })
+  resetForm({ values: { day: '', crew: 'A', days: 1, passcode: '' } })
   passLocked.value = true
 }
 
@@ -459,16 +512,17 @@ async function save(action: 'lock' | 'move' | 'unlock') {
   saving.value = true
   message.value = ''
   try {
+    const len = Number(days.value) || editing.value.days
     const body =
       action === 'lock' && editing.value.current
-        ? { job: editing.value.job, action, crew: s(editing.value.current.crew), day: s(editing.value.current.day) }
-        : { job: editing.value.job, action, crew: crew.value, day: day.value }
+        ? { job: editing.value.job, action, crew: s(editing.value.current.crew), day: s(editing.value.current.day), days: len }
+        : { job: editing.value.job, action, crew: crew.value, day: day.value, days: len }
     const runNow = !replanning.value // a run is going: save only, and queue one more run
     log('save →', { ...body, replan: runNow })
     const res = await $fetch('/api/override', { method: 'POST', body: { ...body, passcode: passcode.value, replan: runNow } })
     log('save ✓', res)
     sessionPasscode = String(passcode.value)
-    if (action === 'move') justSaved.value.set(editing.value.job, { day: String(body.day), crew: String(body.crew) })
+    if (action !== 'unlock') justSaved.value.set(editing.value.job, { day: String(body.day), crew: String(body.crew), days: len })
     if (runNow) startReplanWatch()
     else { queued.value++; log(`queued – will be included in the next update (${queued.value} waiting)`) }
     reloadFresh()
@@ -595,6 +649,8 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
               <span v-else-if="g.moving === 'saved'" class="tag saved-tag">✓ Saved here</span>
               <span v-else-if="s(g.source).startsWith('Dan')" class="tag">🔒 {{ g.source }}</span>
               <span v-if="!g.last" class="contmark">continues →</span>
+              <span v-if="g.last" class="resize" title="Drag to make the job longer or shorter" @pointerdown="startResize($event, g, firstDayOf(s(g.job)))"
+                @pointermove="moveResize" @pointerup="endResize" @pointercancel="endResize" />
             </button>
           </VueDraggable>
           <article v-for="c in w.days" :key="c.iso" class="cell" :class="{ off: c.holiday, out: !c.work && !c.holiday, school: c.school }">
@@ -625,6 +681,8 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                     <span class="small muted reason">{{ p.reason }}</span>
                     <span v-if="s(p.source).startsWith('Dan')" class="tag">🔒 {{ p.source }}</span>
                   </template>
+                  <span class="resize" title="Drag to make the job longer or shorter" @pointerdown="startResize($event, p, c.iso)"
+                    @pointermove="moveResize" @pointerup="endResize" @pointercancel="endResize" />
                 </button>
                 </template>
                 <p v-if="ln.id !== 'A+B' && !cell(c.iso, ln.id).length" class="small free">Crew {{ ln.id }} free</p>
@@ -675,7 +733,10 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
         <p v-else class="small muted">Not in the plan yet · {{ editing.techs }} techs × {{ editing.days }} day(s)</p>
         <p v-if="editing.dropped && errors.day" class="banner bad small">Can't move it there: {{ errors.day }}</p>
         <p v-else-if="editing.dropped" class="banner small">
-          Move to <b>{{ dayLabel(day) }}</b>, <b>{{ crew === 'A+B' ? 'both crews' : 'Crew ' + crew }}</b>? Press <b>Save move</b> to confirm.
+          <template v-if="Number(days) !== editing.days">Set to <b>{{ days }} day{{ Number(days) === 1 ? '' : 's' }}</b> (estimate was {{ editing.days }}), </template>
+          <template v-if="Number(days) !== editing.days && s(editing.current?.day) === day && s(editing.current?.crew) === crew">staying on <b>{{ dayLabel(day) }}</b>, <b>Crew {{ crew }}</b>?</template>
+          <template v-else>move to <b>{{ dayLabel(day) }}</b>, <b>{{ crew === 'A+B' ? 'both crews' : 'Crew ' + crew }}</b>?</template>
+          Press <b>Save</b> to confirm.
         </p>
 
         <button v-if="editing.current && !editing.dropped" type="button" :disabled="saving" @click="saveWithPasscode('lock')">🔒 Lock where it is</button>
@@ -694,6 +755,13 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
           </select>
           <span v-if="errors.crew" class="small bad">{{ errors.crew }}</span>
           <span v-else-if="editing.techs > 2" class="small muted">Needs {{ editing.techs }} technicians, so both crews.</span>
+        </label>
+        <label>Length
+          <select v-model="days" :class="{ invalid: errors.days }">
+            <option v-for="d in lengthOptions" :key="d" :value="d">{{ d }} day{{ d === 1 ? '' : 's' }}</option>
+          </select>
+          <span v-if="errors.days" class="small bad">{{ errors.days }}</span>
+          <span v-else-if="Number(days) !== editing.days" class="small muted">The Backlog estimate is {{ editing.days }} day(s); your length replaces it for this job.</span>
         </label>
 
         <label>Passcode
@@ -794,6 +862,12 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .droptoast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 30; margin: 0; max-width: min(560px, calc(100vw - 32px));
   background: var(--bad); color: #fff; padding: 10px 14px; border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); font-size: 14px; }
 .lane .job { cursor: grab; touch-action: none; }
+/* resize handle on the right edge of every card and bar (FullCalendar style); two thin lines show on hover */
+.job { position: relative; }
+.resize { position: absolute; top: 0; right: 0; width: 14px; height: 100%; cursor: ew-resize; touch-action: none; border-radius: 0 8px 8px 0; }
+.resize::after { content: ''; position: absolute; top: 50%; right: 4px; width: 3px; height: 14px; margin-top: -7px; border-left: 2px solid var(--c); border-right: 2px solid var(--c); opacity: 0; }
+.job:hover .resize::after { opacity: 0.6; }
+@media (max-width: 900px) { .resize { display: none; } }
 /* wide screens: one heading row for the week (the day boxes' own headings are hidden) */
 .dayhead { font-size: 13px; font-weight: 700; padding: 6px 8px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); }
 .dayhead.off { background: repeating-linear-gradient(45deg, #f1f2f4, #f1f2f4 6px, #e7e9ec 6px, #e7e9ec 12px); }

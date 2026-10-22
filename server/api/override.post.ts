@@ -37,11 +37,16 @@ export default defineEventHandler(async (event) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(body.day))) throw createError({ statusCode: 400, statusMessage: 'Bad day' })
   }
 
+  // optional resize: Dan's length in days replaces the Backlog estimate for this job
+  const days = body.days === undefined || body.days === null ? '' : Number(body.days)
+  if (days !== '' && !(days > 0 && days <= 10)) throw createError({ statusCode: 400, statusMessage: 'Bad days' })
+
   const row = {
     job,
     action,
     crew: action === 'unlock' ? '' : body.crew,
     day: action === 'unlock' ? '' : body.day,
+    days: action === 'unlock' ? '' : days,
     updated_by: 'Dan (web page)',
     updated_at: new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC', // to the second, like run_at
   }
