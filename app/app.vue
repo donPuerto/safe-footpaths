@@ -183,15 +183,25 @@ const firstDayOf = (job: string) => displayPlan.value.filter((x) => s(x.job) ===
 const resizing = ref<{ job: string; day: string; crew: string; days: number } | null>(null)
 // The day column under the pointer, anywhere on the calendar (so a resize can cross into the next week row):
 // the cell whose x-range holds the pointer, in the week row nearest to the pointer.
+// Dragging past the right end of a week row continues into the next week's work days (Fri → Mon → …),
+// past the left end goes back; a holiday cell snaps to the work day before it.
 function dayUnderPointer(x: number, y: number) {
-  let best: { day: string; dist: number } | null = null
-  for (const el of document.querySelectorAll<HTMLElement>('.cal .cell[data-day]')) {
-    const r = el.getBoundingClientRect()
-    if (x < r.left || x > r.right) continue
-    const dist = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0
-    if (!best || dist < best.dist) best = { day: el.dataset.day!, dist }
-  }
-  return best?.day || ''
+  const cells = [...document.querySelectorAll<HTMLElement>('.cal .cell[data-day]')].map((el) => ({ day: el.dataset.day!, r: el.getBoundingClientRect() }))
+  if (!cells.length) return ''
+  // the week row nearest to the pointer (cells sharing the same top)
+  const rowDist = (r: DOMRect) => (y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0)
+  const nearest = cells.reduce((a, c) => (rowDist(c.r) < rowDist(a.r) ? c : a))
+  const row = cells.filter((c) => Math.abs(c.r.top - nearest.r.top) < 2).sort((a, b) => a.r.left - b.r.left)
+  const colW = row[0]!.r.width + 6
+  const wd = workDays.value
+  // index in workDays of the last work day on/before a date
+  const idxOf = (day: string) => { let i = -1; for (let k = 0; k < wd.length; k++) if (wd[k]! <= day) i = k; return i }
+  const hit = row.find((c) => x >= c.r.left && x <= c.r.right)
+  if (hit) return wd[Math.max(0, idxOf(hit.day))] || ''
+  const first = row[0]!, last = row.at(-1)!
+  if (x > last.r.right) return wd[Math.min(wd.length - 1, idxOf(last.day) + Math.ceil((x - last.r.right) / colW))] || ''
+  if (x < first.r.left) return wd[Math.max(0, idxOf(first.day) - Math.ceil((first.r.left - x) / colW))] || ''
+  return ''
 }
 function startResize(e: PointerEvent, p: CalRow, startDay: string) {
   e.preventDefault()
