@@ -319,6 +319,15 @@ const spanLabel = (p: CalRow) => {
 }
 const dragJob = ref('')
 const calKey = ref(0) // bumped after every drag: the calendar re-renders from the data
+// Room left in a crew's day, in plain words: "free", "½ day free", "¼ day free" – or '' when the day is full.
+// Counts every job shown in the lane (a multi-day job takes the whole day).
+const laneRoom = (day: string, crew: string) => {
+  const used = cell(day, crew).reduce((a, p) => a + jobLoad(Number(p.days) || 1), 0)
+  const left = Math.round((1 - used) * 4) / 4
+  if (left <= 0) return ''
+  if (left >= 1) return 'free'
+  return `${({ 0.25: '¼', 0.5: '½', 0.75: '¾' } as Record<number, string>)[left] || left} day free`
+}
 // While dragging: can the dragged job go into this lane? (lanes that can are shown green, "Drop here")
 const laneFits = (day: string, crew: string) => !!dragJob.value && !whyNotLane(dragJob.value, day, crew === 'A+B' ? 'A' : crew)
 let lastOver = ''
@@ -775,8 +784,8 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                     @pointerdown="startResize($event, p, c.iso)" />
                 </button>
                 </template>
-                <p v-if="ln.id !== 'A+B' && !cell(c.iso, ln.id).length" class="small free">
-                  {{ dragJob && laneFits(c.iso, ln.id) ? `Drop here → Crew ${ln.id}` : `Crew ${ln.id} free` }}
+                <p v-if="ln.id !== 'A+B' && laneRoom(c.iso, ln.id)" class="small free">
+                  {{ dragJob && laneFits(c.iso, ln.id) ? `Drop here → Crew ${ln.id}` : `Crew ${ln.id}` }} · {{ laneRoom(c.iso, ln.id) }}
                 </p>
               </VueDraggable>
             </template>
