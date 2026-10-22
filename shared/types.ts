@@ -8,12 +8,12 @@ export interface RankedRow {
 }
 export interface PlanRow {
   day: string; day_label: string; crew: string; crew_names: string; job: Cell; organisation: string
-  suburb: string; techs: Cell; days: Cell; part: string; source: string; reason: string
+  suburb: string; techs: Cell; days: Cell; part: string; source: string; reason: string; seq?: Cell
 }
 export interface NeedsHumanRow { job: Cell; type: string; reason: string }
 export interface CheckRow { check: string; result: string; detail: string; run_at: string }
 export interface RunRow { run_at: string; ok: string; jobs: Cell; placed: Cell; needs_human: Cell; rule_order: string }
-export interface OverrideRow { job: Cell; action: string; crew: string; day: string; days?: Cell; updated_by: string; updated_at: string }
+export interface OverrideRow { job: Cell; action: string; crew: string; day: string; days?: Cell; seq?: Cell; updated_by: string; updated_at: string }
 export interface SettingRow { key: string; value: Cell }
 
 export interface PlanData {
@@ -28,10 +28,11 @@ export interface PlanData {
 
 export interface OverrideRequest {
   job?: string
-  action: 'lock' | 'move' | 'unlock' | 'replan'
+  action: 'lock' | 'move' | 'unlock' | 'order' | 'replan'
   crew?: 'A' | 'B' | 'A+B'
   day?: string
   days?: number // resize: Dan's length for this job, replaces the Backlog estimate
+  seq?: number // order within the day (1 = first); action 'order' sets only this
   passcode: string
   replan?: boolean // false = save only (a planner run is already going; the page queues one more)
 }

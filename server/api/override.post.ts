@@ -31,8 +31,13 @@ export default defineEventHandler(async (event) => {
   const job = String(body.job ?? '').trim()
   const action = body.action
   if (!/^\d+$/.test(job)) throw createError({ statusCode: 400, statusMessage: 'Bad job number' })
-  if (!['lock', 'move', 'unlock'].includes(action)) throw createError({ statusCode: 400, statusMessage: 'Bad action' })
-  if (action !== 'unlock') {
+  if (!['lock', 'move', 'unlock', 'order'].includes(action)) throw createError({ statusCode: 400, statusMessage: 'Bad action' })
+  // order within the day (1 = first); "order" alone doesn't pin the job to a day
+  const seq = body.seq === undefined || body.seq === null ? '' : Number(body.seq)
+  if (seq !== '' && !(Number.isInteger(seq) && seq >= 1 && seq <= 99)) throw createError({ statusCode: 400, statusMessage: 'Bad seq' })
+  if (action === 'order' && seq === '') throw createError({ statusCode: 400, statusMessage: 'order needs seq' })
+  const noPlace = action === 'unlock' || action === 'order'
+  if (!noPlace) {
     if (!['A', 'B', 'A+B'].includes(String(body.crew))) throw createError({ statusCode: 400, statusMessage: 'Bad crew' })
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(body.day))) throw createError({ statusCode: 400, statusMessage: 'Bad day' })
   }
@@ -44,9 +49,10 @@ export default defineEventHandler(async (event) => {
   const row = {
     job,
     action,
-    crew: action === 'unlock' ? '' : body.crew,
-    day: action === 'unlock' ? '' : body.day,
-    days: action === 'unlock' ? '' : days,
+    crew: noPlace ? '' : body.crew,
+    day: noPlace ? '' : body.day,
+    days: noPlace ? '' : days,
+    seq: action === 'unlock' ? '' : seq,
     updated_by: 'Dan (web page)',
     updated_at: new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC', // to the second, like run_at
   }

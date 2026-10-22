@@ -271,6 +271,15 @@ const isMulti = (p: CalRow) => /^day \d+ of \d+/.test(s(p.part))
 const mondayOf = (iso: string) => addDays(iso, -((new Date(iso + 'T00:00:00Z').getUTCDay() + 6) % 7))
 type Seg = CalRow & { col: number; span: number; first: boolean; last: boolean }
 const strips = ref<Record<string, Seg[]>>({}) // key "monday|crew"
+// Order within a day: seq from the Overrides rows, overridden by an order Dan has just set on the page (localSeq)
+// until the fresh data carries it. 1 = first; jobs without a seq come after, in plan order.
+const localSeq = ref(new Map<string, number>())
+const seqOf = (job: string) => {
+  const l = localSeq.value.get(job)
+  if (l !== undefined) return l
+  const o = Number(overrides.value.get(job)?.seq)
+  return o >= 1 ? o : Infinity
+}
 function rebuildLanes() {
   const m: Record<string, CalRow[]> = {}
   for (const d of workDays.value) for (const c of ['A', 'B', 'A+B']) m[laneKey(d, c)] = []
@@ -282,6 +291,7 @@ function rebuildLanes() {
       byJob.get(s(p.job))!.push(p)
     } else m[laneKey(s(p.day), s(p.crew))]?.push(p)
   }
+  for (const k of Object.keys(m)) m[k] = m[k]!.map((p, i) => ({ p, i })).sort((a, b) => seqOf(s(a.p.job)) - seqOf(s(b.p.job)) || a.i - b.i).map((x) => x.p)
   // one bar per run of side-by-side days in the same week (a weekend or holiday splits it)
   for (const rows of byJob.values()) {
     rows.sort((a, b) => s(a.day).localeCompare(s(b.day)))
@@ -379,14 +389,69 @@ function canMove(e: MoveEvent) {
   return !reason
 }
 const dragOptions = {
-  group: 'jobs', sort: false, animation: 180, draggable: '.job:not(.cont)',
+  group: 'jobs', sort: true, animation: 180, draggable: '.job:not(.cont)', // sort = reorder within a lane
   filter: '.resize', preventOnFilter: false, // the resize handle resizes, it never starts a drag
   forceFallback: true, fallbackOnBody: true, fallbackTolerance: 4, // own drag image: solid card, also on touch screens
   ghostClass: 'drag-placeholder', chosenClass: 'drag-chosen', dragClass: 'drag-flying',
   onMove: canMove,
 }
 // strip of long bars: cards can be dragged out of it onto a day, nothing is dropped into it
-const stripOptions = { ...dragOptions, group: { name: 'jobs', pull: true, put: false }, draggable: '.job' }
+const stripOptions = { ...dragOptions, sort: false, group: { name: 'jobs', pull: true, put: false }, draggable: '.job' }
+
+// ---- reorder within a day (drag a card up/down inside its lane) -> confirm the day's order, save seq per job ----
+const reorder = ref<{ day: string; crew: string; jobs: string[] } | null>(null)
+const reorderPass = ref('')
+const reorderSaving = ref(false)
+const reorderError = ref('')
+const jobName = (job: string) => {
+  const r = data.value?.ranked.find((x) => s(x.job) === job)
+  return { org: org(r?.organisation, job), suburb: s(r?.suburb) }
+}
+function onReorder(e: DraggableEvent<CalRow>, day: string, crew: string) {
+  const jobs = [...(e.to as HTMLElement).querySelectorAll<HTMLElement>('.job[data-job]')].map((el) => el.dataset.job!)
+  const uniq = [...new Set(jobs)]
+  if (uniq.length < 2) return
+  uniq.forEach((j, i) => localSeq.value.set(j, i + 1)) // keep the new order on screen while the panel is open
+  reorder.value = { day, crew, jobs: uniq }
+  reorderPass.value = ''
+  reorderError.value = ''
+  log('reorder', { day, crew, order: uniq })
+}
+function cancelReorder() {
+  for (const j of reorder.value?.jobs ?? []) localSeq.value.delete(j)
+  reorder.value = null
+  rebuildLanes()
+  calKey.value++
+}
+async function saveReorder() {
+  const r = reorder.value
+  if (!r) return
+  const code = reorderPass.value.trim() || sessionPasscode
+  if (!code) { reorderError.value = 'Type the passcode to save.'; return }
+  reorderSaving.value = true
+  reorderError.value = ''
+  try {
+    for (const [i, job] of r.jobs.entries()) {
+      const o = overrides.value.get(job)
+      const pinned = o && !['unlock', 'order'].includes(s(o.action))
+      const body = pinned
+        ? { job, action: s(o!.action), crew: s(o!.crew), day: s(o!.day), days: Number(o!.days) || undefined, seq: i + 1 }
+        : { job, action: 'order', seq: i + 1 }
+      log('save order →', body)
+      await $fetch('/api/override', { method: 'POST', body: { ...body, passcode: code } })
+    }
+    sessionPasscode = code
+    reorder.value = null
+    reorderPass.value = ''
+    reloadFresh()
+    startReplanWatch()
+  } catch (e: any) {
+    reorderError.value = e?.statusCode === 401 ? 'Wrong passcode.' : e?.statusMessage || e?.data?.statusMessage || 'Could not save the order.'
+    log('save order ✗', e?.statusCode)
+  } finally {
+    reorderSaving.value = false
+  }
+}
 // '' when the job fits in that lane, otherwise the reason in plain words (same rules as the planner)
 function whyNotLane(job: string, day: string, crew: string) {
   const r = data.value?.ranked.find((x) => s(x.job) === job)
@@ -505,6 +570,7 @@ watch(data, () => {
     const inPlan = (data.value?.plan ?? []).some((p) => s(p.job) === job && s(p.day) === mv.day && s(p.crew) === mv.crew)
     if (inPending || inPlan) justSaved.value.delete(job)
   }
+  for (const [job, v] of localSeq.value) if (Number(overrides.value.get(job)?.seq) === v) localSeq.value.delete(job)
 })
 onBeforeUnmount(() => clearInterval(replanTimer))
 
@@ -765,7 +831,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                 v-model="lanes[laneKey(c.iso, ln.id)]!" v-bind="dragOptions" :data-lane="laneKey(c.iso, ln.id)"
                 class="lane" :class="[crewClass(ln.id), { both: ln.id === 'A+B', nodrop: dragJob && blocked?.lane === laneKey(c.iso, ln.id),
                   ready: dragJob && laneFits(c.iso, ln.id), cant: dragJob && !laneFits(c.iso, ln.id), over: dragJob && hoverLane === laneKey(c.iso, ln.id) }]"
-                @start="onDragStart" @end="onDragEnd" @add="onDrop($event, c.iso, ln.id)">
+                @start="onDragStart" @end="onDragEnd" @add="onDrop($event, c.iso, ln.id)" @update="onReorder($event, c.iso, ln.id)">
                 <template v-for="p in lanes[laneKey(c.iso, ln.id)]" :key="s(p.job) + p.part">
                 <!-- day 2+ of a multi-day job: a slim bar joined to the first-day card -->
                 <button v-if="isContinued(p)" type="button" class="job cont" :class="[crewClass(p.crew), { incoming: p.moving }]"
@@ -774,6 +840,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                 </button>
                 <button v-else type="button" class="job"
                   :class="[crewClass(p.crew), { incoming: p.moving, multi: spanLabel(p) }]" :data-job="s(p.job)" @click="onCardClick(p.job)">
+                  <span v-if="seqOf(s(p.job)) !== Infinity" class="seqno" title="Dan's order within the day">{{ seqOf(s(p.job)) }}</span>
                   <i class="chip">{{ s(p.crew) === 'A+B' ? 'Both' : 'Crew ' + s(p.crew) }}</i>
                   <strong>{{ s(p.job) }}</strong> {{ org(p.organisation, p.job) }}
                   <span class="small">{{ p.suburb }} · {{ spanLabel(p) || s(p.days) + 'd' }}</span>
@@ -824,6 +891,25 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
         <button v-if="/^\d+$/.test(s(n.job))" @click="openEdit(n.job)">Place it</button>
       </div>
     </section>
+
+    <!-- Order within a day -->
+    <div v-if="reorder" class="sheet" @click.self="cancelReorder">
+      <form class="panel" novalidate @submit.prevent="saveReorder">
+        <h2>Order for {{ dayLabel(reorder.day) }} · Crew {{ reorder.crew }}</h2>
+        <ol class="orderlist">
+          <li v-for="j in reorder.jobs" :key="j"><strong>{{ j }}</strong> {{ jobName(j).org }} <span class="small muted">{{ jobName(j).suburb }}</span></li>
+        </ol>
+        <p class="small muted">1 = the crew's first job that day. The order is kept on every re-run. It doesn't pin the jobs to this day.</p>
+        <label>Passcode
+          <input v-model="reorderPass" type="text" class="secret" name="sf-order-code" autocomplete="off" autocapitalize="off" spellcheck="false" />
+        </label>
+        <div class="actions">
+          <button type="submit" class="primary" :disabled="reorderSaving">{{ reorderSaving ? 'Saving…' : 'Save order' }}</button>
+          <button type="button" @click="cancelReorder">Cancel</button>
+        </div>
+        <p v-if="reorderError" class="small bad">{{ reorderError }}</p>
+      </form>
+    </div>
 
     <!-- Move / Lock panel -->
     <div v-if="editing" class="sheet" @click.self="closeEdit">
@@ -1012,6 +1098,8 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 @keyframes pop { from { transform: scale(0.94); opacity: 0.3; } to { transform: none; opacity: 1; } }
 .free { margin: 0; color: var(--muted); border: 1px dashed var(--line); border-radius: 6px; padding: 3px 8px; font-size: 12px; }
 .free.full { border-style: solid; background: #f1f2f4; color: #8a919c; }
+.orderlist { margin: 0; padding-left: 22px; display: grid; gap: 4px; }
+.job .seqno { display: inline-block; min-width: 18px; height: 18px; line-height: 18px; text-align: center; border-radius: 9px; background: var(--c); color: #fff; font-size: 11px; font-weight: 700; margin-right: 4px; }
 .tag { display: inline-block; font-size: 12px; background: #eef2f7; border-radius: 6px; padding: 1px 6px; }
 .list { display: grid; gap: 8px; }
 .row { display: flex; gap: 12px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
