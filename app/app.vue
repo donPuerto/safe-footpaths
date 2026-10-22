@@ -191,7 +191,10 @@ function startResize(e: PointerEvent, p: CalRow, startDay: string) {
   const colW = g.width / 5
   const col = colOf(startDay)
   resizing.value = { job: s(p.job), day: startDay, crew: s(p.crew), left: g.left + col * colW, colW, max: 5 - col, days: Math.max(1, Math.ceil(Number(p.days) || 1)) }
-  handle.setPointerCapture(e.pointerId)
+  // listen on the window, not the handle: the card may be re-rendered (strip <-> lane) while it is being resized
+  window.addEventListener('pointermove', moveResize)
+  window.addEventListener('pointerup', endResize, { once: true })
+  window.addEventListener('pointercancel', endResize, { once: true })
   log('resize start', { job: s(p.job), from: `${resizing.value.days} day(s)` })
 }
 function moveResize(e: PointerEvent) {
@@ -205,10 +208,14 @@ function moveResize(e: PointerEvent) {
   }
 }
 function endResize() {
+  window.removeEventListener('pointermove', moveResize)
+  window.removeEventListener('pointerup', endResize)
+  window.removeEventListener('pointercancel', endResize)
   const r = resizing.value
   if (!r) return
   resizing.value = null
   dragEndedAt = Date.now()
+  log('resize end', { job: r.job, days: r.days })
   openEdit(r.job)
   if (!editing.value) return
   setFieldValue('day', r.day)
@@ -285,6 +292,7 @@ const spanLabel = (p: CalRow) => {
   return days.length > 1 ? `${days.length} days: ${dayLabel(days[0]!)} → ${dayLabel(days.at(-1)!)}` : ''
 }
 const dragJob = ref('')
+const calKey = ref(0) // bumped after every drag: the calendar re-renders from the data
 let lastOver = ''
 function onDragStart(e: DraggableEvent<CalRow>) {
   dragJob.value = s(e.data?.job)
@@ -302,8 +310,9 @@ function onDragEnd(e: DraggableEvent<CalRow>) {
   dragEndedAt = Date.now()
   log(e.from === e.to ? 'drag end – put back where it was' : 'drag end (dropped)', blocked.value?.reason || '')
   dragJob.value = ''
-  // SortableJS/VueDraggable update their lists after this event; a moment later, redraw everything from the data
-  setTimeout(rebuildLanes, 0)
+  // SortableJS/VueDraggable update their lists after this event; a moment later, redraw the whole calendar
+  // from the data (new render key) so no moved DOM node can be left behind
+  setTimeout(() => { rebuildLanes(); calKey.value++ }, 0)
   // a refused drop snaps the card back; keep the reason on screen long enough to read it
   if (blocked.value) { const b = blocked.value; setTimeout(() => { if (blocked.value === b) blocked.value = null }, 8000) }
 }
@@ -635,7 +644,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
     <p v-if="blocked" class="droptoast" role="status">⛔ {{ dragJob ? "Can't drop here" : 'Put back where it was' }}: {{ blocked.reason }}</p>
 
     <!-- Calendar: weeks as rows, Mon–Fri as columns (on a phone, swipe sideways through the days) -->
-    <section v-if="tab === 'plan' && data" class="cal">
+    <section v-if="tab === 'plan' && data" :key="calKey" class="cal">
       <p class="legend small">
         <span v-for="c in allCrews" :key="c.id" :class="crewClass(c.id)"><i class="chip">Crew {{ c.id }}</i> {{ c.name }}</span>
         <span class="crew-AB"><i class="chip">Both</i> 4-person job</span>
@@ -663,7 +672,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
               <span v-else-if="s(g.source).startsWith('Dan')" class="tag">🔒 {{ g.source }}</span>
               <span v-if="!g.last" class="contmark">continues →</span>
               <span v-if="g.last" class="resize" role="button" :aria-label="`Resize ${s(g.job)}`" title="Drag to make the job longer or shorter"
-                @pointerdown="startResize($event, g, firstDayOf(s(g.job)))" @pointermove="moveResize" @pointerup="endResize" @pointercancel="endResize" />
+                @pointerdown="startResize($event, g, firstDayOf(s(g.job)))" />
             </button>
           </VueDraggable>
           <article v-for="c in w.days" :key="c.iso" class="cell" :class="{ off: c.holiday, out: !c.work && !c.holiday, school: c.school }">
@@ -695,7 +704,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                     <span v-if="s(p.source).startsWith('Dan')" class="tag">🔒 {{ p.source }}</span>
                   </template>
                   <span class="resize" role="button" :aria-label="`Resize ${s(p.job)}`" title="Drag to make the job longer or shorter"
-                    @pointerdown="startResize($event, p, c.iso)" @pointermove="moveResize" @pointerup="endResize" @pointercancel="endResize" />
+                    @pointerdown="startResize($event, p, c.iso)" />
                 </button>
                 </template>
                 <p v-if="ln.id !== 'A+B' && !cell(c.iso, ln.id).length" class="small free">Crew {{ ln.id }} free</p>
