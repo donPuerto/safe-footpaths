@@ -186,16 +186,20 @@ function onDragStart(e: DraggableEvent<CalRow>) {
   log('drag start', { job: dragJob.value, from: `${s(e.data?.day)} crew ${s(e.data?.crew)}` })
 }
 function onDragEnd(e: DraggableEvent<CalRow>) {
-  log(e.from === e.to ? 'drag end – put back where it was' : 'drag end (dropped)')
+  log(e.from === e.to ? 'drag end – put back where it was' : 'drag end (dropped)', blocked.value?.reason || '')
   dragJob.value = ''
+  setTimeout(() => { blocked.value = null }, 2500) // leave the reason up a moment after letting go
 }
-// SortableJS asks before showing the card in a lane: a lane it can't fit in refuses it (the card stays put).
+// SortableJS asks before showing the card in a lane: a lane it can't fit in refuses it (the card stays put),
+// and the lane turns red with the reason, so a refused drop never looks like a broken page.
+const blocked = ref<{ lane: string; reason: string } | null>(null)
 function canMove(e: MoveEvent) {
   const key = (e.to as HTMLElement).dataset.lane || ''
   const [day = '', crew = ''] = key.split('|')
-  const ok = !!day && fitsLane(dragJob.value, day, crew === 'A+B' ? 'A' : crew)
-  if (lastOver !== key) { log('drag over', { day, crew, fits: ok }); lastOver = key }
-  return ok
+  const reason = day ? whyNotLane(dragJob.value, day, crew === 'A+B' ? 'A' : crew) : 'Not a day in the plan.'
+  blocked.value = reason ? { lane: key, reason } : null
+  if (lastOver !== key) { log('drag over', { day, crew, fits: !reason, reason }); lastOver = key }
+  return !reason
 }
 const dragOptions = {
   group: 'jobs', sort: false, animation: 180, draggable: '.job',
@@ -203,15 +207,23 @@ const dragOptions = {
   ghostClass: 'drag-placeholder', chosenClass: 'drag-chosen', dragClass: 'drag-flying',
   onMove: canMove,
 }
-function fitsLane(job: string, day: string, crew: string) {
+// '' when the job fits in that lane, otherwise the reason in plain words (same rules as the planner)
+function whyNotLane(job: string, day: string, crew: string) {
   const r = data.value?.ranked.find((x) => s(x.job) === job)
   const days = Number(r?.days) || 1
   const crews = Number(r?.techs) > 2 ? ['A', 'B'] : [crew]
   const i = workDays.value.indexOf(day)
   const n = Math.max(1, Math.ceil(days))
-  if (i < 0 || i + n > workDays.value.length) return false
-  return workDays.value.slice(i, i + n).every((d) =>
-    crews.every((c) => [...dansOtherJobs(d, c, job).values()].reduce((a, b) => a + b, 0) + jobLoad(days) <= 1 + 1e-9))
+  if (i < 0) return `${dayLabel(day)} is not a work day.`
+  if (i + n > workDays.value.length)
+    return `${job} takes ${n} work days – it can't start ${dayLabel(day)}: the plan ends ${dayLabel(workDays.value.at(-1)!)}.`
+  for (const d of workDays.value.slice(i, i + n))
+    for (const c of crews) {
+      const others = dansOtherJobs(d, c, job)
+      if ([...others.values()].reduce((a, b) => a + b, 0) + jobLoad(days) > 1 + 1e-9)
+        return `Crew ${c} is already full on ${dayLabel(d)} with your change ${[...others.keys()].join(', ')}.`
+    }
+  return ''
 }
 // Dropped into another lane: open the confirm panel with that day and crew (the card is already there).
 function onDrop(e: DraggableEvent<CalRow>, day: string, crew: string) {
@@ -448,6 +460,9 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
       </div>
     </nav>
 
+    <!-- why a lane refused the card (shown while dragging over it, and a moment after letting go) -->
+    <p v-if="blocked" class="droptoast" role="status">⛔ Can't drop here: {{ blocked.reason }}</p>
+
     <!-- Calendar: weeks as rows, Mon–Fri as columns (on a phone, swipe sideways through the days) -->
     <section v-if="tab === 'plan' && data" class="cal">
       <p class="legend small">
@@ -469,7 +484,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
               <!-- one draggable list per lane: both-crew jobs (only when there are some), then Crew A, Crew B -->
               <VueDraggable v-for="ln in [...(lanes[laneKey(c.iso, 'A+B')]?.length ? [{ id: 'A+B' }] : []), ...crews]" :key="ln.id"
                 v-model="lanes[laneKey(c.iso, ln.id)]!" v-bind="dragOptions" :data-lane="laneKey(c.iso, ln.id)"
-                class="lane" :class="[crewClass(ln.id), { both: ln.id === 'A+B' }]"
+                class="lane" :class="[crewClass(ln.id), { both: ln.id === 'A+B', nodrop: dragJob && blocked?.lane === laneKey(c.iso, ln.id) }]"
                 @start="onDragStart" @end="onDragEnd" @add="onDrop($event, c.iso, ln.id)">
                 <button v-for="p in lanes[laneKey(c.iso, ln.id)]" :key="s(p.job) + p.part" type="button" class="job"
                   :class="[crewClass(p.crew), { incoming: p.moving }]" :data-job="s(p.job)" @click="openEdit(p.job)">
@@ -639,6 +654,9 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .lane { flex: 1 0 auto; display: flex; flex-direction: column; gap: 4px; min-height: 48px; padding: 4px; border-radius: 8px;
   background: color-mix(in srgb, var(--c) 5%, transparent); border-left: 3px solid color-mix(in srgb, var(--c) 35%, transparent); }
 .lane.both { flex: 0 0 auto; min-height: 0; }
+.lane.nodrop { outline: 2px dashed var(--bad); outline-offset: 2px; background: #fdecea; }
+.droptoast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 30; margin: 0; max-width: min(560px, calc(100vw - 32px));
+  background: var(--bad); color: #fff; padding: 10px 14px; border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); font-size: 14px; }
 .lane .job { cursor: grab; touch-action: none; }
 .lane .job:hover { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12); }
 .job.incoming { border: 2px dashed var(--c); border-left-width: 4px; background: color-mix(in srgb, var(--c) 10%, #fff); animation: pop 0.25s ease-out; }
