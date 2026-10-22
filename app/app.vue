@@ -701,7 +701,10 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
     </nav>
 
     <!-- why a lane refused the card (shown while dragging over it, and a moment after letting go) -->
-    <p v-if="blocked" class="droptoast" role="status">⛔ {{ dragJob ? "Can't drop here" : 'Put back where it was' }}: {{ blocked.reason }}</p>
+    <p v-if="blocked" class="droptoast" role="status">
+      <span>⛔ {{ dragJob ? "Can't drop here" : 'Put back where it was' }}: {{ blocked.reason }}</span>
+      <button type="button" class="toastclose" aria-label="Close" @click="blocked = null">✕</button>
+    </p>
 
     <!-- Calendar: weeks as rows, Mon–Fri as columns (on a phone, swipe sideways through the days) -->
     <section v-if="tab === 'plan' && data" :key="calKey" class="cal" :class="{ dragging: dragJob }">
@@ -956,7 +959,10 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .lane.cant { opacity: 0.45; }
 .lane.nodrop { outline: 2px dashed var(--bad); outline-offset: 2px; background: #fdecea; opacity: 1; }
 .droptoast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 30; margin: 0; max-width: min(560px, calc(100vw - 32px));
-  background: var(--bad); color: #fff; padding: 10px 14px; border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); font-size: 14px; }
+  background: var(--bad); color: #fff; padding: 10px 12px 10px 14px; border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25); font-size: 14px;
+  display: flex; align-items: flex-start; gap: 10px; }
+.toastclose { flex: 0 0 auto; background: transparent; border: 1px solid rgba(255, 255, 255, 0.6); color: #fff; border-radius: 6px; padding: 0 7px; line-height: 1.5; cursor: pointer; }
+.toastclose:hover { background: rgba(255, 255, 255, 0.15); }
 .lane .job { cursor: grab; touch-action: none; }
 /* resize handle on the right edge of every card and bar (FullCalendar style); two thin lines show on hover */
 .job { position: relative; }
