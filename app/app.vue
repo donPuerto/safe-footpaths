@@ -345,9 +345,11 @@ const laneRoom = (day: string, crew: string) => {
 // While dragging: can the dragged job go into this lane? (lanes that can are shown green, "Drop here")
 const laneFits = (day: string, crew: string) => !!dragJob.value && !whyNotLane(dragJob.value, day, crew === 'A+B' ? 'A' : crew)
 let lastOver = ''
+let dragStartOrder: string[] = [] // the source lane's job order when the drag began (for reorder)
 function onDragStart(e: DraggableEvent<CalRow>) {
   dragJob.value = s(e.data?.job)
   lastOver = ''
+  dragStartOrder = (lanes.value[(e.from as HTMLElement).dataset.lane || ''] || []).map((p) => s(p.job))
   log('drag start', { job: dragJob.value, from: `${s(e.data?.day)} crew ${s(e.data?.crew)}` })
 }
 // The browser fires a click on the card right after a drag or resize ends; that must not re-open the panel
@@ -408,8 +410,14 @@ const jobName = (job: string) => {
   return { org: org(r?.organisation, job), suburb: s(r?.suburb) }
 }
 function onReorder(e: DraggableEvent<CalRow>, day: string, crew: string) {
-  const jobs = [...(e.to as HTMLElement).querySelectorAll<HTMLElement>('.job[data-job]')].map((el) => el.dataset.job!)
-  const uniq = [...new Set(jobs)]
+  // the library restores the DOM before this fires, so apply the drag's indices to the start-of-drag order
+  const from = e.oldDraggableIndex ?? e.oldIndex ?? 0
+  const to = e.newDraggableIndex ?? e.newIndex ?? 0
+  const arr = [...new Set(dragStartOrder)]
+  if (from === to || from >= arr.length) return
+  const [moved] = arr.splice(from, 1)
+  arr.splice(Math.min(to, arr.length), 0, moved!)
+  const uniq = arr
   if (uniq.length < 2) return
   uniq.forEach((j, i) => localSeq.value.set(j, i + 1)) // keep the new order on screen while the panel is open
   reorder.value = { day, crew, jobs: uniq }
