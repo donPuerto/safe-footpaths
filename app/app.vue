@@ -402,9 +402,15 @@ const stripOptions = { ...dragOptions, sort: false, group: { name: 'jobs', pull:
 
 // ---- reorder within a day (drag a card up/down inside its lane) -> confirm the day's order, save seq per job ----
 const reorder = ref<{ day: string; crew: string; jobs: string[] } | null>(null)
-const reorderPass = ref('')
 const reorderSaving = ref(false)
 const reorderError = ref('')
+// its own VeeValidate form, like the Move panel: passcode required, wrong passcode shown under the field
+const orderForm = useForm({
+  validationSchema: { passcode: (v: string) => (v?.trim() ? true : 'Type the passcode to save.') },
+  initialValues: { passcode: '' },
+})
+const [reorderPass] = orderForm.defineField('passcode')
+const orderErrors = orderForm.errors
 const jobName = (job: string) => {
   const r = data.value?.ranked.find((x) => s(x.job) === job)
   return { org: org(r?.organisation, job), suburb: s(r?.suburb) }
@@ -421,21 +427,22 @@ function onReorder(e: DraggableEvent<CalRow>, day: string, crew: string) {
   if (uniq.length < 2) return
   uniq.forEach((j, i) => localSeq.value.set(j, i + 1)) // keep the new order on screen while the panel is open
   reorder.value = { day, crew, jobs: uniq }
-  reorderPass.value = ''
+  orderForm.resetForm({ values: { passcode: '' } })
   reorderError.value = ''
   log('reorder', { day, crew, order: uniq })
 }
 function cancelReorder() {
   for (const j of reorder.value?.jobs ?? []) localSeq.value.delete(j)
   reorder.value = null
+  orderForm.resetForm({ values: { passcode: '' } })
   rebuildLanes()
   calKey.value++
 }
+const submitReorder = orderForm.handleSubmit(() => saveReorder(), ({ errors: e }) => log('order save blocked by form checks', e))
 async function saveReorder() {
   const r = reorder.value
   if (!r) return
-  const code = reorderPass.value.trim() || sessionPasscode
-  if (!code) { reorderError.value = 'Type the passcode to save.'; return }
+  const code = String(reorderPass.value).trim()
   reorderSaving.value = true
   reorderError.value = ''
   try {
@@ -450,11 +457,12 @@ async function saveReorder() {
     }
     sessionPasscode = code
     reorder.value = null
-    reorderPass.value = ''
+    orderForm.resetForm({ values: { passcode: '' } })
     reloadFresh()
     startReplanWatch()
   } catch (e: any) {
-    reorderError.value = e?.statusCode === 401 ? 'Wrong passcode.' : e?.statusMessage || e?.data?.statusMessage || 'Could not save the order.'
+    if (e?.statusCode === 401) orderForm.setFieldError('passcode', 'Wrong passcode.')
+    else reorderError.value = e?.statusMessage || e?.data?.statusMessage || 'Could not save the order.'
     log('save order ✗', e?.statusCode)
   } finally {
     reorderSaving.value = false
@@ -902,14 +910,15 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
 
     <!-- Order within a day -->
     <div v-if="reorder" class="sheet" @click.self="cancelReorder">
-      <form class="panel" novalidate @submit.prevent="saveReorder">
+      <form class="panel" novalidate @submit.prevent="submitReorder">
         <h2>Order for {{ dayLabel(reorder.day) }} · Crew {{ reorder.crew }}</h2>
         <ol class="orderlist">
           <li v-for="j in reorder.jobs" :key="j"><strong>{{ j }}</strong> {{ jobName(j).org }} <span class="small muted">{{ jobName(j).suburb }}</span></li>
         </ol>
         <p class="small muted">1 = the crew's first job that day. The order is kept on every re-run. It doesn't pin the jobs to this day.</p>
         <label>Passcode
-          <input v-model="reorderPass" type="text" class="secret" name="sf-order-code" autocomplete="off" autocapitalize="off" spellcheck="false" />
+          <input v-model="reorderPass" type="text" class="secret" :class="{ invalid: orderErrors.passcode }" name="sf-order-code" autocomplete="off" autocapitalize="off" spellcheck="false" />
+          <span v-if="orderErrors.passcode" class="small bad">{{ orderErrors.passcode }}</span>
         </label>
         <div class="actions">
           <button type="submit" class="primary" :disabled="reorderSaving">{{ reorderSaving ? 'Saving…' : 'Save order' }}</button>
