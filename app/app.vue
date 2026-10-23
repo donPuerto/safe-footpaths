@@ -271,15 +271,17 @@ const isMulti = (p: CalRow) => /^day \d+ of \d+/.test(s(p.part))
 const mondayOf = (iso: string) => addDays(iso, -((new Date(iso + 'T00:00:00Z').getUTCDay() + 6) % 7))
 type Seg = CalRow & { col: number; span: number; first: boolean; last: boolean }
 const strips = ref<Record<string, Seg[]>>({}) // key "monday|crew"
-// Order within a day: seq from the Overrides rows, overridden by an order Dan has just set on the page (localSeq)
-// until the fresh data carries it. 1 = first; jobs without a seq come after, in plan order.
-const localSeq = ref(new Map<string, number>())
-const seqOf = (job: string) => {
-  const l = localSeq.value.get(job)
-  if (l !== undefined) return l
-  const o = Number(overrides.value.get(job)?.seq)
-  return o >= 1 ? o : Infinity
-}
+// Order within a day (composable): Dan's seq, local preview, the "Order for <day>" panel and its saves.
+const { localSeq, seqOf, syncFromData: syncSeqFromData, reorder, reorderPass, orderErrors, reorderSaving, reorderError, beginDrag, onReorder, cancelReorder, submitReorder } =
+  useDayOrder({
+    overrides,
+    laneJobs: (key) => (lanes.value[key] || []).map((p) => s(p.job)),
+    redraw: () => { rebuildLanes(); calKey.value++ },
+    afterSave: () => { reloadFresh(); startReplanWatch() },
+    getPasscode: () => sessionPasscode,
+    setPasscode: (c) => { sessionPasscode = c },
+    log,
+  })
 function rebuildLanes() {
   const m: Record<string, CalRow[]> = {}
   for (const d of workDays.value) for (const c of ['A', 'B', 'A+B']) m[laneKey(d, c)] = []
@@ -345,11 +347,10 @@ const laneRoom = (day: string, crew: string) => {
 // While dragging: can the dragged job go into this lane? (lanes that can are shown green, "Drop here")
 const laneFits = (day: string, crew: string) => !!dragJob.value && !whyNotLane(dragJob.value, day, crew === 'A+B' ? 'A' : crew)
 let lastOver = ''
-let dragStartOrder: string[] = [] // the source lane's job order when the drag began (for reorder)
 function onDragStart(e: DraggableEvent<CalRow>) {
   dragJob.value = s(e.data?.job)
   lastOver = ''
-  dragStartOrder = (lanes.value[(e.from as HTMLElement).dataset.lane || ''] || []).map((p) => s(p.job))
+  beginDrag((e.from as HTMLElement).dataset.lane || '') // remember the lane's order, for a reorder inside it
   log('drag start', { job: dragJob.value, from: `${s(e.data?.day)} crew ${s(e.data?.crew)}` })
 }
 // The browser fires a click on the card right after a drag or resize ends; that must not re-open the panel
@@ -400,73 +401,10 @@ const dragOptions = {
 // strip of long bars: cards can be dragged out of it onto a day, nothing is dropped into it
 const stripOptions = { ...dragOptions, sort: false, group: { name: 'jobs', pull: true, put: false }, draggable: '.job' }
 
-// ---- reorder within a day (drag a card up/down inside its lane) -> confirm the day's order, save seq per job ----
-const reorder = ref<{ day: string; crew: string; jobs: string[] } | null>(null)
-const reorderSaving = ref(false)
-const reorderError = ref('')
-// its own VeeValidate form, like the Move panel: passcode required, wrong passcode shown under the field
-const orderForm = useForm({
-  validationSchema: { passcode: (v: string) => (v?.trim() ? true : 'Type the passcode to save.') },
-  initialValues: { passcode: '' },
-})
-const [reorderPass] = orderForm.defineField('passcode')
-const orderErrors = orderForm.errors
+// name shown in the "Order for <day>" panel (the reorder logic itself lives in composables/useDayOrder.ts)
 const jobName = (job: string) => {
   const r = data.value?.ranked.find((x) => s(x.job) === job)
   return { org: org(r?.organisation, job), suburb: s(r?.suburb) }
-}
-function onReorder(e: DraggableEvent<CalRow>, day: string, crew: string) {
-  // the library restores the DOM before this fires, so apply the drag's indices to the start-of-drag order
-  const from = e.oldDraggableIndex ?? e.oldIndex ?? 0
-  const to = e.newDraggableIndex ?? e.newIndex ?? 0
-  const arr = [...new Set(dragStartOrder)]
-  if (from === to || from >= arr.length) return
-  const [moved] = arr.splice(from, 1)
-  arr.splice(Math.min(to, arr.length), 0, moved!)
-  const uniq = arr
-  if (uniq.length < 2) return
-  uniq.forEach((j, i) => localSeq.value.set(j, i + 1)) // keep the new order on screen while the panel is open
-  reorder.value = { day, crew, jobs: uniq }
-  orderForm.resetForm({ values: { passcode: '' } })
-  reorderError.value = ''
-  log('reorder', { day, crew, order: uniq })
-}
-function cancelReorder() {
-  for (const j of reorder.value?.jobs ?? []) localSeq.value.delete(j)
-  reorder.value = null
-  orderForm.resetForm({ values: { passcode: '' } })
-  rebuildLanes()
-  calKey.value++
-}
-const submitReorder = orderForm.handleSubmit(() => saveReorder(), ({ errors: e }) => log('order save blocked by form checks', e))
-async function saveReorder() {
-  const r = reorder.value
-  if (!r) return
-  const code = String(reorderPass.value).trim()
-  reorderSaving.value = true
-  reorderError.value = ''
-  try {
-    for (const [i, job] of r.jobs.entries()) {
-      const o = overrides.value.get(job)
-      const pinned = o && !['unlock', 'order'].includes(s(o.action))
-      const body = pinned
-        ? { job, action: s(o!.action), crew: s(o!.crew), day: s(o!.day), days: Number(o!.days) || undefined, seq: i + 1 }
-        : { job, action: 'order', seq: i + 1 }
-      log('save order →', body)
-      await $fetch('/api/override', { method: 'POST', body: { ...body, passcode: code } })
-    }
-    sessionPasscode = code
-    reorder.value = null
-    orderForm.resetForm({ values: { passcode: '' } })
-    reloadFresh()
-    startReplanWatch()
-  } catch (e: any) {
-    if (e?.statusCode === 401) orderForm.setFieldError('passcode', 'Wrong passcode.')
-    else reorderError.value = e?.statusMessage || e?.data?.statusMessage || 'Could not save the order.'
-    log('save order ✗', e?.statusCode)
-  } finally {
-    reorderSaving.value = false
-  }
 }
 // '' when the job fits in that lane, otherwise the reason in plain words (same rules as the planner)
 function whyNotLane(job: string, day: string, crew: string) {
@@ -586,7 +524,7 @@ watch(data, () => {
     const inPlan = (data.value?.plan ?? []).some((p) => s(p.job) === job && s(p.day) === mv.day && s(p.crew) === mv.crew)
     if (inPending || inPlan) justSaved.value.delete(job)
   }
-  for (const [job, v] of localSeq.value) if (Number(overrides.value.get(job)?.seq) === v) localSeq.value.delete(job)
+  syncSeqFromData()
 })
 onBeforeUnmount(() => clearInterval(replanTimer))
 
@@ -825,6 +763,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
               :class="[crewClass(g.crew), { incoming: g.moving, 'cont-left': !g.first, 'cont-right': !g.last }]"
               :style="{ gridColumn: `${g.col + 1} / span ${g.span}` }" :data-job="s(g.job)" @click="onCardClick(g.job)">
               <span v-if="!g.first" class="contmark">← continued</span>
+              <span v-if="g.first" class="seqno" :class="{ dan: seqOf(s(g.job)) !== Infinity }" title="A multi-day job is the crew's only job those days">1</span>
               <i class="chip">{{ s(g.crew) === 'A+B' ? 'Both' : 'Crew ' + s(g.crew) }}</i>
               <strong>{{ s(g.job) }}</strong> <span>{{ org(g.organisation, g.job) }}</span>
               <span class="small">{{ g.suburb }} · {{ spanLabel(g) }}</span>
@@ -848,7 +787,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                 class="lane" :class="[crewClass(ln.id), { both: ln.id === 'A+B', nodrop: dragJob && blocked?.lane === laneKey(c.iso, ln.id),
                   ready: dragJob && laneFits(c.iso, ln.id), cant: dragJob && !laneFits(c.iso, ln.id), over: dragJob && hoverLane === laneKey(c.iso, ln.id) }]"
                 @start="onDragStart" @end="onDragEnd" @add="onDrop($event, c.iso, ln.id)" @update="onReorder($event, c.iso, ln.id)">
-                <template v-for="p in lanes[laneKey(c.iso, ln.id)]" :key="s(p.job) + p.part">
+                <template v-for="(p, idx) in lanes[laneKey(c.iso, ln.id)]" :key="s(p.job) + p.part">
                 <!-- day 2+ of a multi-day job: a slim bar joined to the first-day card -->
                 <button v-if="isContinued(p)" type="button" class="job cont" :class="[crewClass(p.crew), { incoming: p.moving }]"
                   :data-job="s(p.job)" @click="onCardClick(p.job)">
@@ -856,7 +795,8 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
                 </button>
                 <button v-else type="button" class="job"
                   :class="[crewClass(p.crew), { incoming: p.moving, multi: spanLabel(p) }]" :data-job="s(p.job)" @click="onCardClick(p.job)">
-                  <span v-if="seqOf(s(p.job)) !== Infinity" class="seqno" title="Dan's order within the day">{{ seqOf(s(p.job)) }}</span>
+                  <!-- position in the crew's day: solid = Dan set this order, outlined = the planner's order -->
+                  <span class="seqno" :class="{ dan: seqOf(s(p.job)) !== Infinity }" :title="seqOf(s(p.job)) !== Infinity ? 'Order set by Dan' : 'Planner order – drag up/down to change'">{{ idx + 1 }}</span>
                   <i class="chip">{{ s(p.crew) === 'A+B' ? 'Both' : 'Crew ' + s(p.crew) }}</i>
                   <strong>{{ s(p.job) }}</strong> {{ org(p.organisation, p.job) }}
                   <span class="small">{{ p.suburb }} · {{ spanLabel(p) || s(p.days) + 'd' }}</span>
@@ -1116,7 +1056,9 @@ nav { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 10px
 .free { margin: 0; color: var(--muted); border: 1px dashed var(--line); border-radius: 6px; padding: 3px 8px; font-size: 12px; }
 .free.full { border-style: solid; background: #f1f2f4; color: #8a919c; }
 .orderlist { margin: 0; padding-left: 22px; display: grid; gap: 4px; }
-.job .seqno { display: inline-block; min-width: 18px; height: 18px; line-height: 18px; text-align: center; border-radius: 9px; background: var(--c); color: #fff; font-size: 11px; font-weight: 700; margin-right: 4px; }
+.job .seqno { display: inline-block; min-width: 18px; height: 18px; line-height: 15px; text-align: center; border-radius: 9px; font-size: 11px; font-weight: 700; margin-right: 4px;
+  background: #fff; color: var(--c); border: 1.5px solid var(--c); } /* planner's order: outlined */
+.job .seqno.dan { background: var(--c); color: #fff; } /* Dan's order: solid */
 .tag { display: inline-block; font-size: 12px; background: #eef2f7; border-radius: 6px; padding: 1px 6px; }
 .list { display: grid; gap: 8px; }
 .row { display: flex; gap: 12px; align-items: center; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
