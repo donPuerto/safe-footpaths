@@ -1,9 +1,9 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>How it works · Safe Footpaths plan</title>
+<title>How it works Â· Safe Footpaths plan</title>
 <style>
   :root { --bg: #f6f7f9; --card: #fff; --ink: #1d232b; --muted: #66717f; --line: #dde1e6; --ok: #1a7f37; --bad: #b42318; --accent: #0b5cad; }
   * { box-sizing: border-box; }
@@ -35,7 +35,7 @@
 <div class="page">
   <header>
     <h1>How the plan works</h1>
-    <a class="btn" href="/">← Back to the plan</a>
+    <a class="btn" href="/">â† Back to the plan</a>
   </header>
   <p class="muted">A plain-English guide to what this page does, where the data lives, what the AI is allowed to do, and what happens when it is wrong.</p>
   <nav class="toc">
@@ -56,9 +56,9 @@
 
   <h2 id="loop">The loop, in one line</h2>
   <div class="flow">
-    Dan drags a card → one row saved to <b>Overrides</b> → planner reads <b>Backlog + Rules + Settings + Overrides</b> → writes <b>Ranked, Plan, Needs a human, Checks</b> → adds a line to <b>Runs</b> → the page sees the new run and refreshes. About 20–30 seconds.
+    Dan drags a card â†’ one row saved to <b>Overrides</b> â†’ planner reads <b>Backlog + Rules + Settings + Overrides</b> â†’ writes <b>Ranked, Plan, Needs a human, Checks</b> â†’ adds a line to <b>Runs</b> â†’ the page sees the new run and refreshes. About 20â€“30 seconds.
   </div>
-  <p>While the planner is running, the moved card shows <span class="tag">✓ Saved here</span>. When the run lands it becomes <span class="tag lock">🔒 Dan (moved)</span>.</p>
+  <p>While the planner is running, the moved card shows <span class="tag">âœ“ Saved here</span>. When the run lands it becomes <span class="tag lock">ðŸ”’ Dan (moved)</span>.</p>
 
   <h2 id="tabs">The Sheet tabs</h2>
   <table>
@@ -85,15 +85,15 @@
     <li>Rework, then jobs the client calls urgent, then jobs the client is chasing.</li>
     <li>Other private jobs, then council jobs in progress, then new council jobs.</li>
   </ol>
-  <p>Every card shows which rule placed it, for example <code>Rank 2 – Rule 2: Director Priority</code>, so the order is always explainable.</p>
+  <p>Every card shows which rule placed it, for example <code>Rank 2 â€“ Rule 2: Director Priority</code>, so the order is always explainable.</p>
 
   <h2 id="cards">Cards: blank, moved, locked</h2>
-  <p>Think of the calendar as a whiteboard. The planner writes cards in pencil and rewrites them on every run. A 🔒 card is written in pen: the planner must not move it.</p>
+  <p>Think of the calendar as a whiteboard. The planner writes cards in pencil and rewrites them on every run. A ðŸ”’ card is written in pen: the planner must not move it.</p>
   <table>
     <tr><th>Card shows</th><th>Who put it there</th><th>Will the planner move it next run?</th></tr>
     <tr><td>blank (no badge)</td><td>The planner, by the rules</td><td class="ok">Yes, if the rules or data change</td></tr>
-    <tr><td><span class="tag lock">🔒 Dan (moved)</span></td><td>Dan dragged it to another day or crew</td><td class="bad">No, it stays where Dan put it</td></tr>
-    <tr><td><span class="tag lock">🔒 Dan (locked)</span></td><td>The planner placed it; Dan said "keep it here"</td><td class="bad">No, it stays where it is</td></tr>
+    <tr><td><span class="tag lock">ðŸ”’ Dan (moved)</span></td><td>Dan dragged it to another day or crew</td><td class="bad">No, it stays where Dan put it</td></tr>
+    <tr><td><span class="tag lock">ðŸ”’ Dan (locked)</span></td><td>The planner placed it; Dan said "keep it here"</td><td class="bad">No, it stays where it is</td></tr>
   </table>
   <p>The badge shows Dan's <em>last</em> action. Moved and locked mean the same thing to the planner. The lock is against the automatic planner, not against people: anyone with the passcode can drag the card again or click <b>Unlock</b>, which hands the job back to the rules.</p>
   <h3>What Dan can do on the page</h3>
@@ -129,76 +129,42 @@
     <li><b>A failed check sends the job to Needs a human, not the calendar.</b> A person decides, with the reason in front of them.</li>
     <li><b>The Checks tab is the last net.</b> Twelve checks run on the finished plan, including "jobs that cannot be placed are not in the plan". If any fails, the plan is <b>not written</b>, the last good plan stays on this page and an alert email goes out.</li>
   </ol>
-  <div class="flow">AI reads notes → quotes verified → omissions checked → doubtful jobs to a person → whole plan checked → written only if all pass</div>
+  <div class="flow">AI reads notes â†’ quotes verified â†’ omissions checked â†’ doubtful jobs to a person â†’ whole plan checked â†’ written only if all pass</div>
   <h3>What the guardrails do not cover</h3>
   <p>If the AI misses something no keyword catches, for example "after the client's AGM" with no month named, the job is planned by the rules as if the note did not exist. The fix for that is still a person: Dan reads the calendar and drags the card. Two human-written choices are also assumptions: the first day of Term 1 2027 (the reference only says "late January") and drive times, which are estimated from suburb distances rather than a maps service.</p>
 
   <h2 id="code">The code behind Needs a human</h2>
-  <p>The decision is made by plain code in one planner step, <b>Validate, rank, plan, check</b>. The AI is not involved. Below is that code, simplified: the real version has the same shape, with more wording.</p>
+  <p>No AI here. One planner step runs a short list of <b>if … then …</b> rules on every job. Here they are, in plain words and in the order they run.</p>
 
-  <h3>Step 1: check the AI's answer for each job</h3>
-<pre class="code">for each job:
-  answer = what the AI returned for this job
-  issues = []
+  <h3>1. Is the AI's reading of the notes trustworthy?</h3>
+<pre class="code">The AI's answer is for a different job            -> not trusted
+A fact has no quote, or the quote is not in the notes -> not trusted
+The notes say "urgent", a month, or "school holidays"
+   but the AI said nothing about it                 -> not trusted</pre>
+  <p>A job that is "not trusted" goes to the tray as <b>Not placed · AI check failed</b>. The AI's mistake never reaches the calendar.</p>
 
-  if no answer, or answer.job is not this job:
-      issues.add("AI output missing or for the wrong job")
+  <h3>2. Can this job be done by our crews in these two weeks?</h3>
+<pre class="code">The job is not in Victoria                        -> Not placed
+Someone must approve or plan it first             -> Not placed
+The estimate or duration can't be read            -> Not placed
+It needs more than 4 technicians                  -> Not placed
+The client's dates are before or after the window -> Not placed</pre>
 
-  for each fact the AI set (urgent, chasing, rework, blocker, date window):
-      if the fact's quote is NOT found in the job's notes:
-          issues.add("AI said X but its quote is not in the job text")
+  <h3>3. Book the jobs</h3>
+<pre class="code">Dan's moves and locks go in first, exactly where he put them.
+   (If his choice is a holiday, a full day, or one crew for a 4-person job
+    -> "Dan's change can't be kept", and he picks again.)
+Then each day is filled, best-ranked job first, until it is full.</pre>
 
-  if the AI gave a date but the quote does not name that month:
-      issues.add("AI date ... but that month is not in the quote")
+  <h3>4. Look at what is left</h3>
+<pre class="code">A good job that found no free days              -> No room in window
+A crew's day has more than 3 hours of driving    -> Check driving (the jobs stay booked)</pre>
 
-  # what the AI left out
-  if notes say "urgent" and the AI did not flag urgent:          issues.add(...)
-  if notes mention a notice period and the AI gave none:          issues.add(...)
-  if scheduling notes name a month or "school holidays"
-     and the AI gave no date window:                              issues.add(...)</pre>
+  <h3>5. Last check before writing the Sheet</h3>
+<pre class="code">A "Not placed" job is on the calendar and Dan didn't put it there -> STOP
+   (keep the old plan, send an alert email)</pre>
 
-  <h3>Step 2: the eligibility questions</h3>
-<pre class="code">reasons = []
-if estimate, duration or approval date could not be read:  reasons.add("... not understood")
-if job.state is not VIC:                                    reasons.add("QLD job - crews are based in Hampton Park VIC")
-if client window ended before the plan starts:              reasons.add("Client window ... ended before ...")
-if client window starts after the plan ends:                reasons.add("Client window ... starts after ...")
-if someone must approve or plan first:                      reasons.add("Blocked: <quote>")
-if job needs more than 4 technicians:                       reasons.add("Needs N technicians - we only have 4")
-if issues from step 1 is not empty:                         reasons.add("AI check failed: ...")
-
-job.eligible = (reasons is empty)</pre>
-
-  <h3>Step 3: Dan's changes first, then fill the days</h3>
-<pre class="code">for each row in Overrides (move or lock):
-  if job no longer in Backlog        -> tray "Dan's change can't be kept: no longer in the backlog"
-  if day is a weekend or holiday     -> tray "Dan's change can't be kept: not a work day"
-  if 4-person job on one crew only   -> tray "Dan's change can't be kept: must be on both crews"
-  if it does not fit on that day     -> tray "Dan's change can't be kept: full, or runs past the window"
-  else                               -> place it exactly there, badge "Dan (moved)" or "Dan (locked)"
-
-for each work day, for each crew:
-  keep taking the best-ranked job that is eligible and fits, until the day is full</pre>
-
-  <h3>Step 4: whatever is left goes to the tray</h3>
-<pre class="code">for each job:
-  if not eligible and Dan placed it himself:   skip   (it is on the calendar; not listed twice)
-  if not eligible:                             tray "Not placed: <reasons>"
-  else if not placed:                          tray "No room in window: needs N techs x D days ..."
-
-for each day, for each crew:
-  driving = base -> job 1 -> job 2 -> ... -> base   (suburb distances, road factor, 40 km/h)
-  if driving > the limit in Settings (3 h):    tray "Check driving: Crew X on <day>: ~N h driving"</pre>
-
-  <h3>Step 5: the safety net, before anything is written</h3>
-<pre class="code">for each job that is not eligible:
-  if it is on the calendar and Dan did not put it there:   CHECK FAILS
-
-if any check fails:
-  write only the Checks tab, keep the old plan, send the alert email, stop</pre>
-
-  <p>All of this is tested without n8n or the AI: <code>node engine/test-eligibility.js</code> feeds eleven made-up jobs through the same code (wrong state, blocked, unreadable estimate, 6 technicians, window closed, window too late, AI missed a date, too big, long driving day, Dan's change on a holiday, Dan placing a tray job himself) and checks each one lands with the right label, or on the calendar, and nowhere else.</p>
-
+  <p>That is the whole evaluation. Eleven made-up jobs, one per rule above, are run through this code by a test (<code>node engine/test-eligibility.js</code>) to prove each lands in the right place.</p>
   <h2 id="change">Changing a rule, no rewiring</h2>
   <ol>
     <li>Open the <b>Rules</b> tab in the Sheet.</li>
