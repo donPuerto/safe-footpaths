@@ -27,6 +27,7 @@
   .tag { display: inline-block; font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; background: #fff; }
   .lock { background: #fff3e0; border-color: #f0c27a; }
   .ok { color: var(--ok); } .bad { color: var(--bad); }
+  pre.code { background: #1d232b; color: #e8edf3; border-radius: 8px; padding: 12px 14px; font: 13px/1.5 ui-monospace, Consolas, Menlo, monospace; overflow-x: auto; margin: 6px 0 14px; white-space: pre; }
   @media (max-width: 640px) { .page { padding: 12px 12px 40px; } table { font-size: 13px; } th, td { padding: 5px 6px; } }
 </style>
 </head>
@@ -46,6 +47,7 @@
     <a href="#human">Needs a human</a>
     <a href="#ai">What the AI does</a>
     <a href="#guardrails">Guardrails when the AI is wrong</a>
+    <a href="#code">The code behind Needs a human</a>
     <a href="#change">Changing a rule</a>
   </nav>
 
@@ -130,6 +132,72 @@
   <div class="flow">AI reads notes → quotes verified → omissions checked → doubtful jobs to a person → whole plan checked → written only if all pass</div>
   <h3>What the guardrails do not cover</h3>
   <p>If the AI misses something no keyword catches, for example "after the client's AGM" with no month named, the job is planned by the rules as if the note did not exist. The fix for that is still a person: Dan reads the calendar and drags the card. Two human-written choices are also assumptions: the first day of Term 1 2027 (the reference only says "late January") and drive times, which are estimated from suburb distances rather than a maps service.</p>
+
+  <h2 id="code">The code behind Needs a human</h2>
+  <p>The decision is made by plain code in one planner step, <b>Validate, rank, plan, check</b>. The AI is not involved. Below is that code, simplified: the real version has the same shape, with more wording.</p>
+
+  <h3>Step 1: check the AI's answer for each job</h3>
+<pre class="code">for each job:
+  answer = what the AI returned for this job
+  issues = []
+
+  if no answer, or answer.job is not this job:
+      issues.add("AI output missing or for the wrong job")
+
+  for each fact the AI set (urgent, chasing, rework, blocker, date window):
+      if the fact's quote is NOT found in the job's notes:
+          issues.add("AI said X but its quote is not in the job text")
+
+  if the AI gave a date but the quote does not name that month:
+      issues.add("AI date ... but that month is not in the quote")
+
+  # what the AI left out
+  if notes say "urgent" and the AI did not flag urgent:          issues.add(...)
+  if notes mention a notice period and the AI gave none:          issues.add(...)
+  if scheduling notes name a month or "school holidays"
+     and the AI gave no date window:                              issues.add(...)</pre>
+
+  <h3>Step 2: the eligibility questions</h3>
+<pre class="code">reasons = []
+if estimate, duration or approval date could not be read:  reasons.add("... not understood")
+if job.state is not VIC:                                    reasons.add("QLD job - crews are based in Hampton Park VIC")
+if client window ended before the plan starts:              reasons.add("Client window ... ended before ...")
+if client window starts after the plan ends:                reasons.add("Client window ... starts after ...")
+if someone must approve or plan first:                      reasons.add("Blocked: <quote>")
+if job needs more than 4 technicians:                       reasons.add("Needs N technicians - we only have 4")
+if issues from step 1 is not empty:                         reasons.add("AI check failed: ...")
+
+job.eligible = (reasons is empty)</pre>
+
+  <h3>Step 3: Dan's changes first, then fill the days</h3>
+<pre class="code">for each row in Overrides (move or lock):
+  if job no longer in Backlog        -> tray "Dan's change can't be kept: no longer in the backlog"
+  if day is a weekend or holiday     -> tray "Dan's change can't be kept: not a work day"
+  if 4-person job on one crew only   -> tray "Dan's change can't be kept: must be on both crews"
+  if it does not fit on that day     -> tray "Dan's change can't be kept: full, or runs past the window"
+  else                               -> place it exactly there, badge "Dan (moved)" or "Dan (locked)"
+
+for each work day, for each crew:
+  keep taking the best-ranked job that is eligible and fits, until the day is full</pre>
+
+  <h3>Step 4: whatever is left goes to the tray</h3>
+<pre class="code">for each job:
+  if not eligible and Dan placed it himself:   skip   (it is on the calendar; not listed twice)
+  if not eligible:                             tray "Not placed: <reasons>"
+  else if not placed:                          tray "No room in window: needs N techs x D days ..."
+
+for each day, for each crew:
+  driving = base -> job 1 -> job 2 -> ... -> base   (suburb distances, road factor, 40 km/h)
+  if driving > the limit in Settings (3 h):    tray "Check driving: Crew X on <day>: ~N h driving"</pre>
+
+  <h3>Step 5: the safety net, before anything is written</h3>
+<pre class="code">for each job that is not eligible:
+  if it is on the calendar and Dan did not put it there:   CHECK FAILS
+
+if any check fails:
+  write only the Checks tab, keep the old plan, send the alert email, stop</pre>
+
+  <p>All of this is tested without n8n or the AI: <code>node engine/test-eligibility.js</code> feeds eleven made-up jobs through the same code (wrong state, blocked, unreadable estimate, 6 technicians, window closed, window too late, AI missed a date, too big, long driving day, Dan's change on a holiday, Dan placing a tray job himself) and checks each one lands with the right label, or on the calendar, and nowhere else.</p>
 
   <h2 id="change">Changing a rule, no rewiring</h2>
   <ol>
