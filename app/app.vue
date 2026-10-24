@@ -680,6 +680,7 @@ async function saveWithPasscode(action: 'lock' | 'unlock') {
           {{ pending ? 'Loading…' : 'Refresh' }}
         </button>
         <a v-if="config.public.sheetUrl" :href="config.public.sheetUrl" target="_blank" rel="noopener">Open Google Sheet</a>
+        <a href="/how-it-works.html" target="_blank" rel="noopener" title="Plain-English guide: the loop, the Sheet tabs, moved vs locked, Needs a human, what the AI does and the guardrails when it is wrong">How it works</a>
       </div>
     </header>
 

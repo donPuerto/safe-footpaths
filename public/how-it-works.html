@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How it works · Safe Footpaths plan</title>
+<style>
+  :root { --bg: #f6f7f9; --card: #fff; --ink: #1d232b; --muted: #66717f; --line: #dde1e6; --ok: #1a7f37; --bad: #b42318; --accent: #0b5cad; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  .page { max-width: 860px; margin: 0 auto; padding: 16px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 17px; margin: 28px 0 8px; padding-top: 16px; border-top: 1px solid var(--line); }
+  h3 { font-size: 14px; margin: 16px 0 6px; }
+  p, li { max-width: 72ch; }
+  .muted { color: var(--muted); }
+  a.btn { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 8px 12px; color: var(--ink); text-decoration: none; }
+  .toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 4px; }
+  .toc a { font-size: 13px; border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 4px 10px; color: var(--ink); text-decoration: none; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 14px; background: var(--card); }
+  th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: #eef1f4; font-weight: 600; }
+  code { background: #eef1f4; border-radius: 4px; padding: 1px 5px; font-size: 13px; }
+  .flow { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 14px; }
+  .flow b { color: var(--accent); }
+  .tag { display: inline-block; font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; background: #fff; }
+  .lock { background: #fff3e0; border-color: #f0c27a; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  @media (max-width: 640px) { .page { padding: 12px 12px 40px; } table { font-size: 13px; } th, td { padding: 5px 6px; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>How the plan works</h1>
+    <a class="btn" href="/">← Back to the plan</a>
+  </header>
+  <p class="muted">A plain-English guide to what this page does, where the data lives, what the AI is allowed to do, and what happens when it is wrong.</p>
+  <nav class="toc">
+    <a href="#what">What it is</a>
+    <a href="#loop">The loop</a>
+    <a href="#tabs">The Sheet tabs</a>
+    <a href="#rules">The rules</a>
+    <a href="#cards">Cards: blank, moved, locked</a>
+    <a href="#human">Needs a human</a>
+    <a href="#ai">What the AI does</a>
+    <a href="#guardrails">Guardrails when the AI is wrong</a>
+    <a href="#change">Changing a rule</a>
+  </nav>
+
+  <h2 id="what">What it is</h2>
+  <p>A two-week work plan for two footpath-repair crews (Crew A and Crew B). The backlog of jobs, the boss's priority rules and the crews' settings live in a Google Sheet. An n8n workflow (the <b>planner</b>) reads the Sheet, ranks the jobs, fills each work day crew by crew, and writes the result back to the Sheet. This page shows that result as a calendar and lets the scheduler (Dan) move, resize, reorder or lock jobs. Every change is saved to the Sheet and the planner re-runs by itself.</p>
+
+  <h2 id="loop">The loop, in one line</h2>
+  <div class="flow">
+    Dan drags a card → one row saved to <b>Overrides</b> → planner reads <b>Backlog + Rules + Settings + Overrides</b> → writes <b>Ranked, Plan, Needs a human, Checks</b> → adds a line to <b>Runs</b> → the page sees the new run and refreshes. About 20–30 seconds.
+  </div>
+  <p>While the planner is running, the moved card shows <span class="tag">✓ Saved here</span>. When the run lands it becomes <span class="tag lock">🔒 Dan (moved)</span>.</p>
+
+  <h2 id="tabs">The Sheet tabs</h2>
+  <table>
+    <tr><th>Tab</th><th>What it holds</th><th>Written by</th><th>Read by</th></tr>
+    <tr><td>Backlog</td><td>The job list, one row per job (number, client, address, status, notes, estimate)</td><td>Set up once from the client's CSV. Nothing changes it after that</td><td>Planner</td></tr>
+    <tr><td>Rules</td><td>The boss's priority rules: an <code>order</code> number, a weight and an on/off switch each</td><td>Set up once; edited by hand</td><td>Planner</td></tr>
+    <tr><td>Settings</td><td>Crews, plan window, public holidays, school holidays, drive limits</td><td>Set up once; edited by hand</td><td>Planner, this page (holiday list)</td></tr>
+    <tr><td>Overrides</td><td>Dan's decisions: move, lock, unlock, length, order. One row per job</td><td>This page, on every save</td><td>Planner, this page</td></tr>
+    <tr><td>Ranked</td><td>All jobs from most to least important, with the rule and reason</td><td>Planner, rewritten every run</td><td>This page (Ranked tab)</td></tr>
+    <tr><td>Plan</td><td>One row per card: day, crew, job, length, order, who placed it</td><td>Planner, rewritten every run</td><td>This page (calendar)</td></tr>
+    <tr><td>Needs a human</td><td>Jobs a person must decide, with the reason</td><td>Planner, rewritten every run</td><td>This page (Needs a human tab)</td></tr>
+    <tr><td>Checks</td><td>The planner's self-tests, pass or fail</td><td>Planner, rewritten every run</td><td>You</td></tr>
+    <tr><td>Runs</td><td>One line per run: time, result, counts. Never wiped</td><td>Planner, appended</td><td>This page, to notice a new run</td></tr>
+  </table>
+  <p class="muted">The first three tabs are inputs and are never written by any workflow. If a check fails, the planner writes only the Checks tab and stops, so the last good plan stays on this page.</p>
+
+  <h2 id="rules">The rules</h2>
+  <p>Jobs are compared rule by rule, in the order set in the Rules tab. The first rule where two jobs differ decides which comes first; the oldest approval date is the tie-breaker. In simple words:</p>
+  <ol>
+    <li>School and university jobs go into their holidays (none fall in this window, so this rule is quiet).</li>
+    <li>Anything the director marked as priority comes next.</li>
+    <li>Jobs already in progress (not council) are finished before new ones are started.</li>
+    <li>If a short job (under a day) is within about 30 minutes' drive of a job already on that day, do it the same day.</li>
+    <li>Rework, then jobs the client calls urgent, then jobs the client is chasing.</li>
+    <li>Other private jobs, then council jobs in progress, then new council jobs.</li>
+  </ol>
+  <p>Every card shows which rule placed it, for example <code>Rank 2 – Rule 2: Director Priority</code>, so the order is always explainable.</p>
+
+  <h2 id="cards">Cards: blank, moved, locked</h2>
+  <p>Think of the calendar as a whiteboard. The planner writes cards in pencil and rewrites them on every run. A 🔒 card is written in pen: the planner must not move it.</p>
+  <table>
+    <tr><th>Card shows</th><th>Who put it there</th><th>Will the planner move it next run?</th></tr>
+    <tr><td>blank (no badge)</td><td>The planner, by the rules</td><td class="ok">Yes, if the rules or data change</td></tr>
+    <tr><td><span class="tag lock">🔒 Dan (moved)</span></td><td>Dan dragged it to another day or crew</td><td class="bad">No, it stays where Dan put it</td></tr>
+    <tr><td><span class="tag lock">🔒 Dan (locked)</span></td><td>The planner placed it; Dan said "keep it here"</td><td class="bad">No, it stays where it is</td></tr>
+  </table>
+  <p>The badge shows Dan's <em>last</em> action. Moved and locked mean the same thing to the planner. The lock is against the automatic planner, not against people: anyone with the passcode can drag the card again or click <b>Unlock</b>, which hands the job back to the rules.</p>
+  <h3>What Dan can do on the page</h3>
+  <ul>
+    <li><b>Move:</b> drag a card to another day or crew. A red lane means it does not fit; the toast says why.</li>
+    <li><b>Resize:</b> drag the right edge to make a job 1, 2 or more days. Dan's length replaces the estimate for that job only.</li>
+    <li><b>Order:</b> drag a card up or down within a day. The number in the circle is the crew's order that day.</li>
+    <li><b>Lock / Unlock:</b> open a card and choose.</li>
+    <li><b>Place it:</b> on the Needs a human tab, book a job the planner refused to place.</li>
+  </ul>
+
+  <h2 id="human">Needs a human</h2>
+  <p>This is the planner's question tray. When it is not sure, it does not guess: it lists the job with the reason and a person decides. There are four kinds of row.</p>
+  <table>
+    <tr><th>Label</th><th>Meaning</th><th>On the calendar?</th><th>What a person does</th></tr>
+    <tr><td>Not placed</td><td>The job failed one of the eligibility questions: wrong state, blocked by someone, unreadable estimate, more than 4 technicians, date window outside these two weeks, or the AI's reading of the notes failed its check</td><td class="bad">No</td><td>Fix the cause, or use <b>Place it</b></td></tr>
+    <tr><td>No room in window</td><td>Eligible, but no free days were left</td><td class="bad">No</td><td>Wait for the next plan, or start it partly</td></tr>
+    <tr><td>Dan's change can't be kept</td><td>Dan pinned it to a day or crew that does not work (a public holiday, a full day, one crew for a 4-person job)</td><td class="bad">No</td><td>Pick again</td></tr>
+    <tr><td>Check driving</td><td>Booked, but that crew's day adds up to more than the drive limit in Settings</td><td class="ok">Yes</td><td>Look at the day; drag a card if needed</td></tr>
+  </table>
+  <p>These decisions are made by plain code, not by the AI. They are covered by a test file with eleven cases, one per reason.</p>
+
+  <h2 id="ai">What the AI does, and does not do</h2>
+  <p>There is one AI step in the planner. It reads each job's free-text notes (inspector notes, scheduling notes, client contact) and returns <b>facts only</b>: a date window, "urgent", "chasing", rework, a notice period, a blocker. Every fact must come with a word-for-word quote from the notes.</p>
+  <p>The AI never ranks, never places a job, and never decides what goes to Needs a human. Code does all of that. Think of it as an assistant who reads every email and highlights the important sentences; the checklist (code) verifies each highlight and applies the rules; the boss (Dan) decides the cases the checklist cannot.</p>
+
+  <h2 id="guardrails">Guardrails when the AI is wrong</h2>
+  <p>Five layers. Each catches what the one before it misses.</p>
+  <ol>
+    <li><b>The AI is never allowed to decide.</b> It only reads notes and returns facts. A bad answer cannot book a job on its own.</li>
+    <li><b>Every fact needs a word-for-word quote.</b> Code checks the quote really appears in the job's notes. A date is accepted only if its month is named in the quote. This stops <em>invented</em> facts.</li>
+    <li><b>Keyword cross-checks catch what the AI left out.</b> If the notes say "urgent", a month name or "school holidays" and the AI returned nothing for it, the job fails. This stops <em>omitted</em> facts. It was built after a live run where the AI skipped three date windows.</li>
+    <li><b>A failed check sends the job to Needs a human, not the calendar.</b> A person decides, with the reason in front of them.</li>
+    <li><b>The Checks tab is the last net.</b> Twelve checks run on the finished plan, including "jobs that cannot be placed are not in the plan". If any fails, the plan is <b>not written</b>, the last good plan stays on this page and an alert email goes out.</li>
+  </ol>
+  <div class="flow">AI reads notes → quotes verified → omissions checked → doubtful jobs to a person → whole plan checked → written only if all pass</div>
+  <h3>What the guardrails do not cover</h3>
+  <p>If the AI misses something no keyword catches, for example "after the client's AGM" with no month named, the job is planned by the rules as if the note did not exist. The fix for that is still a person: Dan reads the calendar and drags the card. Two human-written choices are also assumptions: the first day of Term 1 2027 (the reference only says "late January") and drive times, which are estimated from suburb distances rather than a maps service.</p>
+
+  <h2 id="change">Changing a rule, no rewiring</h2>
+  <ol>
+    <li>Open the <b>Rules</b> tab in the Sheet.</li>
+    <li>Change a rule's <code>order</code> number (decimals are fine: <code>2.5</code> puts it between 2 and 3), or set <code>enabled</code> to <code>FALSE</code> to switch it off.</li>
+    <li>Run the planner (or save any change on this page) and the new order applies. Every card's reason updates with it.</li>
+  </ol>
+  <p>Holidays, the plan window, the crews and the drive limit are in the <b>Settings</b> tab in the same way.</p>
+
+  <p class="muted" style="margin-top:32px">Nothing on this page writes to the Sheet. Saving a change on the plan page asks for the shared passcode.</p>
+</div>
+</body>
+</html>
