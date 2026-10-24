@@ -158,10 +158,6 @@ Then each day is filled, best-ranked job first, until it is full.</pre>
 <pre class="code">A good job that found no free days              -> No room in window
 A crew's day has more than 3 hours of driving    -> Check driving (the jobs stay booked)</pre>
 
-  <h3>5. Last check before writing the Sheet</h3>
-<pre class="code">A "Not placed" job is on the calendar and Dan didn't put it there -> STOP
-   (keep the old plan, send an alert email)</pre>
-
   <p>That is the whole evaluation. Eleven made-up jobs, one per rule above, are run through this code by a test (<code>node engine/test-eligibility.js</code>) to prove each lands in the right place.</p>
   <h2 id="change">Changing a rule, no rewiring</h2>
   <ol>
