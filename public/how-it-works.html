@@ -130,8 +130,6 @@
     <li><b>The Checks tab is the last net.</b> Twelve checks run on the finished plan, including "jobs that cannot be placed are not in the plan". If any fails, the plan is <b>not written</b>, the last good plan stays on this page and an alert email goes out.</li>
   </ol>
   <div class="flow">AI reads notes â†’ quotes verified â†’ omissions checked â†’ doubtful jobs to a person â†’ whole plan checked â†’ written only if all pass</div>
-  <h3>What the guardrails do not cover</h3>
-  <p>If the AI misses something no keyword catches, for example "after the client's AGM" with no month named, the job is planned by the rules as if the note did not exist. The fix for that is still a person: Dan reads the calendar and drags the card. Two human-written choices are also assumptions: the first day of Term 1 2027 (the reference only says "late January") and drive times, which are estimated from suburb distances rather than a maps service.</p>
 
   <h2 id="code">The code behind Needs a human</h2>
   <p>No AI here. One planner step runs a short list of <b>if … then …</b> rules on every job. Here they are, in plain words and in the order they run.</p>
